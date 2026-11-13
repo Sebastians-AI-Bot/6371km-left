@@ -1,0 +1,10 @@
+Poly Haven — CC0 (https://polyhaven.com)
+1K JPG sets: albedo (_diff), OpenGL normal (_nor_gl), roughness (_rough).
+
+farm_soil            topsoil
+gravel_ground_01    sand and the sandbox fill
+rock_boulder_dry    limestone, and the hot rock under the cracks
+granular_concrete   granite, wet stone, and the ore host
+
+Ore flecks and the hot cracks are generated in shaders/rock_pbr.gdshader.
+The water ripples are generated in shaders/water.gdshader.
