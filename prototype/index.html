@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>6.371 km</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #101418;
+      color: #d7d4cc;
+      font: 13px/1.35 ui-monospace, monospace;
+    }
+    #stage { position: relative; height: 100%; }
+    canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    #hud {
+      position: absolute;
+      top: 8px;
+      left: 10px;
+      white-space: pre;
+      pointer-events: none;
+      color: #f2efe6;
+      text-shadow: 0 1px 2px #000;
+    }
+    #hint {
+      position: absolute;
+      top: 8px;
+      right: 12px;
+      max-width: 16rem;
+      text-align: right;
+      color: rgba(242, 239, 230, 0.78);
+      text-shadow: 0 1px 2px #000;
+      pointer-events: none;
+    }
+    #panel {
+      display: none;
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: min(320px, 100%);
+      overflow: auto;
+      background: rgba(16, 18, 22, 0.94);
+      border-left: 1px solid #2c3138;
+      padding: 12px 14px 28px;
+      box-sizing: border-box;
+    }
+    #panel.open { display: block; }
+    #panel h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+    #panel h3 { margin: 14px 0 6px; font-size: 12px; font-weight: 600; color: #b7c0aa; }
+    #panel .note { margin: 0 0 8px; color: #a7a396; }
+    #panel .presets { display: flex; flex-wrap: wrap; gap: 6px; }
+    #panel button {
+      font: inherit;
+      color: #eee;
+      background: #2a3038;
+      border: 1px solid #46505c;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+    #panel button.on { background: #3d4a32; border-color: #8aa36a; }
+    #panel .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0;
+    }
+    #panel select, #panel input { font: inherit; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="hud"></div>
+    <div id="hint">A/D move · W jump · W into a wall climbs · S face down · hold mouse or F to dig · G dump · E use · K seal · P pump · O cooler · L belt · T drop drill · [ ] zoom · F1 debug</div>
+    <aside id="panel"></aside>
+  </div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
