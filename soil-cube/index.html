@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Soil cube look</title>
+  <style>
+    :root {
+      --bg: #e6d7c8;
+      --ink: #2b231d;
+      --muted: #6d5c50;
+      --line: rgba(70, 48, 34, 0.16);
+      --soil: #241810;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      background:
+        radial-gradient(ellipse at 50% 0%, #f3e8dc 0%, var(--bg) 46%);
+      color: var(--ink);
+      font-family: "Iowan Old Style", Palatino, Georgia, serif;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      padding: 0.85rem 1.25rem 0.35rem;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+
+    header p {
+      margin: 0.15rem 0 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .switch {
+      display: flex;
+      margin-left: auto;
+      border: 1px solid #b7a496;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255, 250, 244, 0.45);
+    }
+
+    .switch button {
+      font: inherit;
+      font-size: 0.92rem;
+      color: inherit;
+      background: transparent;
+      border: 0;
+      padding: 0.4rem 0.9rem;
+      cursor: pointer;
+    }
+
+    .switch button + button {
+      box-shadow: inset 1px 0 0 #b7a496;
+    }
+
+    .switch button[aria-pressed="true"] {
+      background: var(--soil);
+      color: #f6efe8;
+    }
+
+    .ref-wrap {
+      margin: 0;
+      text-align: center;
+    }
+
+    .ref {
+      width: 64px;
+      height: 64px;
+      object-fit: cover;
+      border-radius: 6px;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6), 0 8px 18px rgba(60, 40, 28, 0.18);
+      display: block;
+    }
+
+    .ref-wrap figcaption {
+      margin-top: 0.2rem;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    .views {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .views[data-mode="cube"] { grid-template-columns: 1.65fr 0.75fr; }
+    .views[data-mode="stack"] { grid-template-columns: 0.75fr 1.65fr; }
+
+    .panel {
+      --size: min(42vh, 270px);
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 0.35rem 1rem 0.8rem;
+    }
+
+    .views[data-mode="cube"] .panel-cube,
+    .views[data-mode="stack"] .panel-stack {
+      --size: min(58vh, 390px);
+    }
+
+    .panel + .panel { box-shadow: inset 1px 0 0 var(--line); }
+
+    .panel h2 {
+      margin: 0;
+      font-size: 1.02rem;
+      font-weight: 600;
+    }
+
+    .panel .note {
+      margin: 0.15rem 0 0;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    .viewport {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+      display: grid;
+      place-items: center;
+      perspective: 1100px;
+      perspective-origin: 50% 42%;
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .viewport:active { cursor: grabbing; }
+
+    .viewport::after {
+      content: "";
+      position: absolute;
+      left: 22%;
+      right: 22%;
+      bottom: 11%;
+      height: 14%;
+      background: radial-gradient(ellipse, rgba(70, 46, 32, 0.28), transparent 70%);
+      pointer-events: none;
+    }
+
+    .cube, .stack {
+      width: var(--size);
+      height: var(--size);
+      position: relative;
+      transform-style: preserve-3d;
+    }
+
+    .face, .slice {
+      position: absolute;
+      inset: 0;
+      transform-style: preserve-3d;
+      background: var(--soil);
+    }
+
+    .face img, .slice img {
+      width: calc(100% + 2px);
+      height: calc(100% + 2px);
+      margin: -1px;
+      display: block;
+      backface-visibility: hidden;
+      pointer-events: none;
+      -webkit-user-drag: none;
+      user-select: none;
+    }
+
+    .front  { transform: translateZ(calc(var(--size) / 2)); }
+    .back   { transform: rotateY(180deg) translateZ(calc(var(--size) / 2)); }
+    .right  { transform: rotateY(90deg) translateZ(calc(var(--size) / 2)); }
+    .left   { transform: rotateY(-90deg) translateZ(calc(var(--size) / 2)); }
+    .top    { transform: rotateX(90deg) translateZ(calc(var(--size) / 2)); }
+    .bottom { transform: rotateX(-90deg) translateZ(calc(var(--size) / 2)); }
+
+    /* The photo has no fourth side. A mirrored side cut fills the hidden face. */
+    .right img { transform: scaleX(-1); }
+
+    .slice {
+      box-shadow: 0 0 0 2px #1a100c;
+    }
+
+    footer {
+      padding: 0 1.25rem 0.7rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    @media (max-width: 760px) {
+      header { flex-wrap: wrap; }
+      .switch { margin-left: 0; }
+      .views,
+      .views[data-mode="cube"],
+      .views[data-mode="stack"] { grid-template-columns: 1fr; }
+      .panel + .panel { box-shadow: inset 0 1px 0 var(--line); }
+      .views[data-mode="cube"] .panel-stack,
+      .views[data-mode="stack"] .panel-cube { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Soil cube</h1>
+      <p>The photo is flat. Two ways to stand it up.</p>
+    </div>
+    <div class="switch" role="group" aria-label="Which look to feature">
+      <button type="button" data-mode="both">Both</button>
+      <button type="button" data-mode="cube">Mapped cube</button>
+      <button type="button" data-mode="stack">Slice stack</button>
+    </div>
+    <figure class="ref-wrap">
+      <img class="ref" src="reference.png" alt="Reference photo of the soil cube">
+      <figcaption>Reference</figcaption>
+    </figure>
+  </header>
+
+  <main class="views" data-mode="both">
+    <section class="panel panel-cube">
+      <h2>Mapped cube</h2>
+      <p class="note">Grass on top. The two cut faces on the front and the side.</p>
+      <div class="viewport" data-orbit="cube">
+        <div class="cube">
+          <div class="face front"><img src="face-front.png" alt=""></div>
+          <div class="face back"><img src="face-front.png" alt=""></div>
+          <div class="face right"><img src="face-side.png" alt=""></div>
+          <div class="face left"><img src="face-side.png" alt=""></div>
+          <div class="face top"><img src="face-top.png" alt=""></div>
+          <div class="face bottom"><img src="face-bottom.png" alt=""></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel panel-stack">
+      <h2>Slice stack</h2>
+      <p class="note">The front cut, six times, each shifted a little back.</p>
+      <div class="viewport" data-orbit="stack">
+        <div class="stack"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>Drag to orbit. Scroll to zoom. The far sides of the cube repeat a cut, because the photo only shows three faces.</footer>
+
+  <script>
+    // Faces were cut from reference.png. Quads, in photo pixels, before a
+    // small inset so the backdrop stays out of the corners:
+    //   top:        left-top, back, right-top, front-top
+    //   front cut:  front-top, right-top, right-bottom, front-bottom
+    //   side cut:   left-top, front-top, front-bottom, left-bottom
+    // The stack repeats the front cut only.
+
+    (function () {
+      var views = document.querySelector(".views");
+      var buttons = document.querySelectorAll(".switch button");
+      var SLICE_COUNT = 6;
+
+      var orbits = {
+        cube: { rx: -28, ry: -36, zoom: 1 },
+        stack: { rx: -16, ry: -24, zoom: 1 }
+      };
+
+      function buildStack() {
+        var stack = document.querySelector(".stack");
+        var mid = (SLICE_COUNT - 1) / 2;
+        var i, slice, img, x, y, z;
+        for (i = SLICE_COUNT - 1; i >= 0; i--) {
+          slice = document.createElement("div");
+          slice.className = "slice";
+          img = document.createElement("img");
+          img.src = "face-front.png";
+          img.alt = "";
+          slice.appendChild(img);
+          x = (i - mid) * 4.2;
+          y = (i - mid) * 3.1;
+          z = (mid - i) * 7.5;
+          slice.style.transform =
+            "translate3d(" + x + "%, " + y + "%, calc(var(--size) * " + (z / 100) + "))";
+          stack.appendChild(slice);
+        }
+      }
+
+      function applyOrbit(name) {
+        var state = orbits[name];
+        var target = document.querySelector('[data-orbit="' + name + '"] .cube, [data-orbit="' + name + '"] .stack');
+        target.style.transform =
+          "rotateX(" + state.rx + "deg) rotateY(" + state.ry + "deg) scale(" + state.zoom + ")";
+      }
+
+      function setMode(mode) {
+        if (mode !== "cube" && mode !== "stack") mode = "both";
+        views.dataset.mode = mode;
+        var i;
+        for (i = 0; i < buttons.length; i++) {
+          buttons[i].setAttribute("aria-pressed", buttons[i].dataset.mode === mode ? "true" : "false");
+        }
+        if (history.replaceState) {
+          history.replaceState(null, "", "#" + mode);
+        } else {
+          location.hash = mode;
+        }
+      }
+
+      function modeFromHash() {
+        var hash = (location.hash || "").replace("#", "");
+        setMode(hash);
+      }
+
+      function attachOrbit(name) {
+        var viewport = document.querySelector('[data-orbit="' + name + '"]');
+        var dragging = false;
+        var lastX = 0;
+        var lastY = 0;
+
+        viewport.addEventListener("pointerdown", function (event) {
+          dragging = true;
+          lastX = event.clientX;
+          lastY = event.clientY;
+          viewport.setPointerCapture(event.pointerId);
+        });
+
+        viewport.addEventListener("pointermove", function (event) {
+          if (!dragging) return;
+          var state = orbits[name];
+          state.ry += (event.clientX - lastX) * 0.45;
+          state.rx += (event.clientY - lastY) * 0.35;
+          if (state.rx > 89) state.rx = 89;
+          if (state.rx < -89) state.rx = -89;
+          lastX = event.clientX;
+          lastY = event.clientY;
+          applyOrbit(name);
+        });
+
+        function endDrag() { dragging = false; }
+        viewport.addEventListener("pointerup", endDrag);
+        viewport.addEventListener("pointercancel", endDrag);
+
+        viewport.addEventListener("wheel", function (event) {
+          event.preventDefault();
+          var state = orbits[name];
+          var next = state.zoom * (event.deltaY > 0 ? 0.92 : 1.08);
+          if (next < 0.55) next = 0.55;
+          if (next > 2.4) next = 2.4;
+          state.zoom = next;
+          applyOrbit(name);
+        }, { passive: false });
+      }
+
+      var b;
+      for (b = 0; b < buttons.length; b++) {
+        buttons[b].addEventListener("click", function (event) {
+          setMode(event.currentTarget.dataset.mode);
+        });
+      }
+
+      window.addEventListener("hashchange", modeFromHash);
+
+      buildStack();
+      applyOrbit("cube");
+      applyOrbit("stack");
+      attachOrbit("cube");
+      attachOrbit("stack");
+      modeFromHash();
+    }());
+  </script>
+</body>
+</html>
