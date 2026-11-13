@@ -6,7 +6,7 @@
 // The heat gradient is exaggerated on purpose: a garden-deep hole has to
 // be able to show a slowdown. Real crust is nearer 25°C per kilometre.
 
-export const MAT = {
+var MAT = {
   AIR: 0,
   SAND: 1,
   SOIL: 2,
@@ -27,17 +27,17 @@ export const MAT = {
   PROP: 17,
 };
 
-export const MAT_COUNT = 18;
-export const MASS_MAX = MAT.GRASS;
+var MAT_COUNT = 18;
+var MASS_MAX = MAT.GRASS;
 
-export const MAT_NAME = [
+var MAT_NAME = [
   "air", "sand", "soil", "soft", "hard", "ore", "fossil", "ingot",
   "slag", "water", "seal", "grass", "pump", "cooler", "bench", "station",
   "belt", "prop",
 ];
 
 // Placeholder colours only. RGB triplets, indexed by MAT.
-export const MAT_RGB = [
+var MAT_RGB = [
   [0, 0, 0],
   [230, 196, 106],
   [112, 78, 48],
@@ -58,10 +58,10 @@ export const MAT_RGB = [
   [92, 96, 100],
 ];
 
-export const SKY_RGB = [186, 214, 232];
-export const UNDER_RGB = [32, 34, 40];
+var SKY_RGB = [186, 214, 232];
+var UNDER_RGB = [32, 34, 40];
 
-export const BALANCE = {
+var BALANCE = {
   widthCm: 960,
   heightCm: 480,
   surfaceCm: 96,
@@ -116,33 +116,33 @@ export const BALANCE = {
   },
 };
 
-export function isMass(m) {
+function isMass(m) {
   return m >= MAT.SAND && m <= MASS_MAX;
 }
 
-export function isSolid(m) {
+function isSolid(m) {
   return m !== MAT.AIR && m !== MAT.WATER;
 }
 
-export function isDiggableMass(m) {
+function isDiggableMass(m) {
   return isMass(m) && m !== MAT.WATER;
 }
 
-export function isMachine(m) {
+function isMachine(m) {
   return m === MAT.PUMP || m === MAT.COOLER || m === MAT.BELT;
 }
 
-export function invCount(inv) {
+function invCount(inv) {
   let n = 0;
   for (let i = 0; i < inv.length; i++) n += inv[i];
   return n;
 }
 
-export function carryCap(sim) {
+function carryCap(sim) {
   return sim.haul === "bucket" ? BALANCE.bucketCap : BALANCE.handCap;
 }
 
-export function totalMass(sim) {
+function totalMass(sim) {
   let n = 0;
   const g = sim.grid;
   for (let i = 0; i < g.length; i++) if (isMass(g[i])) n++;
@@ -153,7 +153,7 @@ export function totalMass(sim) {
   return n;
 }
 
-export function countCells(sim) {
+function countCells(sim) {
   let solid = 0;
   let water = 0;
   const g = sim.grid;
@@ -173,16 +173,16 @@ function idx(sim, x, y) {
   return y * sim.w + x;
 }
 
-export function inBounds(sim, x, y) {
+function inBounds(sim, x, y) {
   return x >= 0 && y >= 0 && x < sim.w && y < sim.h;
 }
 
-export function getCell(sim, x, y) {
+function getCell(sim, x, y) {
   if (!inBounds(sim, x, y)) return MAT.AIR;
   return sim.grid[idx(sim, x, y)];
 }
 
-export function setCell(sim, x, y, mat, loose) {
+function setCell(sim, x, y, mat, loose) {
   if (!inBounds(sim, x, y)) return;
   const i = idx(sim, x, y);
   const prev = sim.grid[i];
@@ -207,7 +207,7 @@ function registerMachine(sim, x, y, mat) {
   sim.machines.push({ x, y, mat, dir });
 }
 
-export function blockedBox(sim, x, y, w, h) {
+function blockedBox(sim, x, y, w, h) {
   if (x < 0 || y < 0 || x + w > sim.w || y + h > sim.h) return true;
   const x0 = Math.floor(x);
   const y0 = Math.floor(y);
@@ -222,7 +222,7 @@ export function blockedBox(sim, x, y, w, h) {
   return false;
 }
 
-export function canDigAt(sim, x, y) {
+function canDigAt(sim, x, y) {
   if (!inBounds(sim, x, y)) return false;
   const m = sim.grid[idx(sim, x, y)];
   if (!isDiggableMass(m)) return false;
@@ -238,7 +238,7 @@ export function canDigAt(sim, x, y) {
   return false;
 }
 
-export function temperatureC(sim, x, y) {
+function temperatureC(sim, x, y) {
   if (sim.heatMode === "off") return BALANCE.surfaceC;
   const depthM = Math.max(0, (y - sim.surfaceCell) * sim.cellCm) / 100;
   let t = BALANCE.surfaceC + depthM * sim.gradient;
@@ -255,7 +255,7 @@ export function temperatureC(sim, x, y) {
 }
 
 // Tool and heat only. Time scale is applied by the caller via dt.
-export function digTimeMul(sim, x, y) {
+function digTimeMul(sim, x, y) {
   let mul = 1;
   if (sim.player.tool === "drill") mul *= BALANCE.drillMul;
   if (sim.heatMode === "slow") {
@@ -265,7 +265,7 @@ export function digTimeMul(sim, x, y) {
   return mul;
 }
 
-export function digSeconds(sim, x, y) {
+function digSeconds(sim, x, y) {
   const m = getCell(sim, x, y);
   const base = BALANCE.dig[m] ?? 0.4;
   return base * digTimeMul(sim, x, y);
@@ -295,7 +295,7 @@ function replaceRect(sim, x0, y0, x1, y1, mat, loose) {
 
 // Place up to n loose cells, stacking on the first solid, spreading sideways.
 // Returns how many were placed. Does not take them from anywhere.
-export function spillCells(sim, mat, n, x, y, limits) {
+function spillCells(sim, mat, n, x, y, limits) {
   if (n <= 0 || !isMass(mat)) return 0;
   const minX = limits && limits.minX != null ? limits.minX : 1;
   const maxX = limits && limits.maxX != null ? limits.maxX : sim.w - 2;
@@ -618,7 +618,7 @@ function placeCart(sim) {
   };
 }
 
-export function createSim(opts = {}) {
+function createSim(opts = {}) {
   const tiny = !!opts.tiny;
   const cellCm = opts.cellCm === 2 ? 2 : 1;
   const sim = {
@@ -688,7 +688,7 @@ export function createSim(opts = {}) {
   return sim;
 }
 
-export function massDelta(sim) {
+function massDelta(sim) {
   return totalMass(sim) - sim.baseMass;
 }
 
@@ -698,7 +698,7 @@ function windowTop(sim) {
   return foot - win;
 }
 
-export function abstractLine(sim) {
+function abstractLine(sim) {
   if (sim.worldMode !== "abstract") return -1;
   return windowTop(sim);
 }
@@ -706,7 +706,7 @@ export function abstractLine(sim) {
 // Loose spoil in the open shaft, above the face window and below the garden
 // bed, becomes a counted package. Embedded beds (no, they are above packMin
 // or anchored) stay cells.
-export function tickAbstract(sim) {
+function tickAbstract(sim) {
   if (sim.worldMode !== "abstract") return 0;
   const top = windowTop(sim);
   if (top <= sim.packMin) return 0;
@@ -729,7 +729,7 @@ export function tickAbstract(sim) {
   return n;
 }
 
-export function addPackage(sim, mat, count, x, y) {
+function addPackage(sim, mat, count, x, y) {
   const cap = 24;
   for (let i = 0; i < sim.packages.length; i++) {
     const p = sim.packages[i];
@@ -748,7 +748,7 @@ export function addPackage(sim, mat, count, x, y) {
   }
 }
 
-export function tickFall(sim, dt) {
+function tickFall(sim, dt) {
   sim.fallAcc += dt * BALANCE.fallPerSec;
   let steps = Math.floor(sim.fallAcc);
   if (steps <= 0) return;
@@ -818,11 +818,11 @@ function tryDiag(sim, x, y, dir, m) {
   return true;
 }
 
-export function entityCount(sim) {
+function entityCount(sim) {
   return 1 + (sim.cart ? 1 : 0) + sim.packages.length + sim.machines.length;
 }
 
-export function tickWater(sim, dt) {
+function tickWater(sim, dt) {
   if (sim.waterMode === "off") return;
   const interval = sim.waterMode === "aggressive" ? BALANCE.waterFast : BALANCE.waterSlow;
   sim.waterAcc += dt;
@@ -880,7 +880,7 @@ function flowDiag(grid, w, x, y, dir) {
   return true;
 }
 
-export function excavatedVolume(sim) {
+function excavatedVolume(sim) {
   const cm3 = sim.stats.excavated * sim.cellCm * sim.cellCm * BALANCE.sliceCm;
   return {
     cm3,
@@ -889,7 +889,7 @@ export function excavatedVolume(sim) {
   };
 }
 
-export function depthCm(sim) {
+function depthCm(sim) {
   const feet = sim.player.y + sim.player.h;
   return Math.max(0, (feet - sim.surfaceCell) * sim.cellCm);
 }

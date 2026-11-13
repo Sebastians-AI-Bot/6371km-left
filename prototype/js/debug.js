@@ -1,9 +1,6 @@
 // DOM debug panel (F1) and the always-on rate overlay.
 
-import { BALANCE, countCells, entityCount, massDelta, temperatureC, depthCm } from "./sim.js";
-import { carryLine } from "./haul.js";
-
-export const PRESETS = [
+var PRESETS = [
   {
     id: "hand",
     label: "Hand",
@@ -262,11 +259,11 @@ export const PRESETS = [
   },
 ];
 
-export function presetById(id) {
+function presetById(id) {
   return PRESETS.find((p) => p.id === id) || PRESETS[0];
 }
 
-export function createRates() {
+function createRates() {
   return {
     fps: 0,
     dugS: 0,
@@ -278,7 +275,7 @@ export function createRates() {
   };
 }
 
-export function sampleRates(rates, sim, realDt) {
+function sampleRates(rates, sim, realDt) {
   rates.frames++;
   rates.acc += realDt;
   if (rates.acc < 0.5) return;
@@ -291,7 +288,7 @@ export function sampleRates(rates, sim, realDt) {
   rates.haul0 = sim.stats.hauled;
 }
 
-export function hudText(sim, rates) {
+function hudText(sim, rates) {
   const cells = countCells(sim);
   const carry = carryLine(sim);
   const lines = [
@@ -353,7 +350,7 @@ function check(label, value, onChange) {
   return wrap;
 }
 
-export function mountPanel(panel, sim, hooks) {
+function mountPanel(panel, sim, hooks) {
   panel.textContent = "";
   const h = document.createElement("h2");
   h.textContent = "Debug";
@@ -457,7 +454,7 @@ export function mountPanel(panel, sim, hooks) {
   panel.appendChild(nums);
 }
 
-export function applyLive(sim, patch) {
+function applyLive(sim, patch) {
   if (patch.haul) sim.haul = patch.haul;
   if (patch.waterMode) sim.waterMode = patch.waterMode;
   if (patch.heatMode) sim.heatMode = patch.heatMode;

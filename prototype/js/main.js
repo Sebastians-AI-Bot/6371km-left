@@ -1,42 +1,5 @@
 // Loop and input. Time scale multiplies the clock. The drill does not.
 
-import {
-  BALANCE,
-  MAT,
-  createSim,
-  blockedBox,
-  tickFall,
-  tickWater,
-  tickAbstract,
-  digSeconds,
-  totalMass,
-  getCell,
-  massDelta,
-} from "./sim.js";
-import {
-  adjacentCell,
-  facingCell,
-  excavate,
-  dump,
-  use,
-  placeSeal,
-  placeKit,
-  dropTool,
-  tickBelts,
-  tickPumps,
-  tickPackages,
-} from "./haul.js";
-import { createView, resize, updateCamera, screenToCell, render } from "./view.js";
-import {
-  PRESETS,
-  presetById,
-  createRates,
-  sampleRates,
-  hudText,
-  mountPanel,
-  applyLive,
-} from "./debug.js";
-
 const canvas = document.getElementById("view");
 const hud = document.getElementById("hud");
 const panel = document.getElementById("panel");

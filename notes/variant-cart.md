@@ -13,7 +13,7 @@ All of that goes through the same move-N-cells path as hand and bucket. A transf
 
 ## How to run
 
-`http://127.0.0.1:8765/prototype/index.html#cart`
+Open `prototype/index.html#cart`.
 
 ## Where the numbers show
 

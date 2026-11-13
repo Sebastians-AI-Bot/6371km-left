@@ -13,7 +13,7 @@ Preset in the debug panel: **Heat**. Hash: `#heat`.
 
 ## How to run
 
-`http://127.0.0.1:8765/prototype/index.html#heat`
+Open `prototype/index.html#heat`.
 
 Heat and Gradient apply immediately.
 

@@ -1,19 +1,7 @@
 // Side camera. Cells are painted into an ImageData the size of the visible
 // grid, then scaled onto the viewport. Never one DOM node per cell.
 
-import {
-  MAT,
-  MAT_RGB,
-  SKY_RGB,
-  UNDER_RGB,
-  BALANCE,
-  temperatureC,
-  abstractLine,
-  depthCm,
-  excavatedVolume,
-} from "./sim.js";
-
-export function createView(canvas) {
+function createView(canvas) {
   const ctx = canvas.getContext("2d", { alpha: false });
   const off = document.createElement("canvas");
   const offCtx = off.getContext("2d", { alpha: false });
@@ -32,7 +20,7 @@ export function createView(canvas) {
   };
 }
 
-export function resize(view) {
+function resize(view) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const cssW = Math.max(1, view.canvas.clientWidth);
   const cssH = Math.max(1, view.canvas.clientHeight);
@@ -43,7 +31,7 @@ export function resize(view) {
   view.dpr = dpr;
 }
 
-export function updateCamera(view, sim, dt) {
+function updateCamera(view, sim, dt) {
   const zoom = sim.zoom;
   const pw = view.cssW / zoom;
   const ph = view.cssH / zoom;
@@ -63,7 +51,7 @@ export function updateCamera(view, sim, dt) {
   view.viewH = ph;
 }
 
-export function screenToCell(view, sim, cssX, cssY) {
+function screenToCell(view, sim, cssX, cssY) {
   return {
     x: Math.floor(view.camX + cssX / sim.zoom),
     y: Math.floor(view.camY + cssY / sim.zoom),
@@ -112,7 +100,7 @@ function shade(rgb, x, y, sim, mat, coolers) {
   return [r & 255, g & 255, b & 255];
 }
 
-export function render(view, sim) {
+function render(view, sim) {
   const ctx = view.ctx;
   const dpr = view.dpr;
   const z = sim.zoom * dpr;

@@ -14,7 +14,7 @@ Embedded ground is not loose, so it stays cells. Only loose spoil is packed.
 
 ## How to run
 
-`http://127.0.0.1:8765/prototype/index.html#abstract-shaft`
+Open `prototype/index.html#abstract-shaft`.
 
 The World control under Live switches full / abstract on the current slice.
 
@@ -26,7 +26,7 @@ HUD `pkg` is the number of cells sitting in packages. `entities` counts each pac
 
 Same Chrome session (1820×1013, 12 Nov 2026).
 
-- Spawn census (Node `createSim`, before the loop runs): cells 460800, solid 356952, water 1960, entities 178, one package holding 24 cells, mass Δ 0.
+- At spawn, before the loop runs: cells 460800, solid 356952, water 1960, entities 178, one package holding 24 cells, mass Δ 0.
 - About 0.7 s after boot in Chrome: fps 60, entities 179, 2 packages holding 44 cells, mass Δ 0. More loose sand in the shaft had been packed. The extra cells were still in the package count.
 
 ## Feel

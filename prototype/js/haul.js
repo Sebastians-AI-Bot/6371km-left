@@ -2,27 +2,12 @@
 // A transfer that does not fit is put back. Nothing is dropped on the floor
 // of the function.
 
-import {
-  MAT,
-  MASS_MAX,
-  BALANCE,
-  isMass,
-  getCell,
-  setCell,
-  inBounds,
-  carryCap,
-  invCount,
-  spillCells,
-  canDigAt,
-  addPackage,
-} from "./sim.js";
-
 const NEI = [
   [-1, 0], [1, 0], [0, -1], [0, 1],
   [-1, -1], [1, -1], [-1, 1], [1, 1],
 ];
 
-export function facingCell(sim) {
+function facingCell(sim) {
   const p = sim.player;
   const left = Math.floor(p.x);
   const right = Math.floor(p.x + p.w - 1e-4);
@@ -42,7 +27,7 @@ export function facingCell(sim) {
 }
 
 // A cell the cursor can dig: the ring just outside the body.
-export function adjacentCell(sim, x, y) {
+function adjacentCell(sim, x, y) {
   if (!inBounds(sim, x, y)) return null;
   const p = sim.player;
   const left = Math.floor(p.x);
@@ -123,7 +108,7 @@ function give(sim, to, mat, n) {
 }
 
 // Move up to n cells of one material. Returns how many moved.
-export function moveCells(sim, from, to, mat, n) {
+function moveCells(sim, from, to, mat, n) {
   if (!isMass(mat) || n <= 0) return 0;
   const taken = take(sim, from, mat, n);
   if (!taken) return 0;
@@ -138,7 +123,7 @@ function say(sim, text) {
   sim.statusT = 2.2;
 }
 
-export function excavate(sim, x, y) {
+function excavate(sim, x, y) {
   if (!inBounds(sim, x, y)) return false;
   const mat = getCell(sim, x, y);
   if (!isMass(mat) || mat === MAT.WATER) return false;
@@ -184,7 +169,7 @@ function dumpInv(sim, kind, x, y) {
   return moved;
 }
 
-export function dump(sim) {
+function dump(sim) {
   const face = facingCell(sim);
   if (sim.haul === "cart" && sim.cart && bodiesNear(sim.player, sim.cart) && invCount(sim.cart.inv) > 0) {
     const x = Math.floor(sim.cart.x + sim.cart.w / 2);
@@ -232,7 +217,7 @@ function smeltPair(sim, a, b) {
   say(sim, "2 ore → ingot + slag");
 }
 
-export function use(sim) {
+function use(sim) {
   if (sim.craft) {
     const fixture = sim.craftAt === "bench" ? MAT.BENCH : MAT.STATION;
     const fixtures = cellsNearBody(sim, fixture, 2);
@@ -333,7 +318,7 @@ export function use(sim) {
   return false;
 }
 
-export function placeSeal(sim) {
+function placeSeal(sim) {
   const face = facingCell(sim);
   if (getCell(sim, face.x, face.y) !== MAT.AIR) {
     say(sim, "seal needs air");
@@ -351,7 +336,7 @@ export function placeSeal(sim) {
   return true;
 }
 
-export function placeKit(sim, kind) {
+function placeKit(sim, kind) {
   const face = facingCell(sim);
   if (!inBounds(sim, face.x, face.y) || getCell(sim, face.x, face.y) !== MAT.AIR) {
     say(sim, "needs an open cell");
@@ -386,7 +371,7 @@ export function placeKit(sim, kind) {
   return false;
 }
 
-export function dropTool(sim) {
+function dropTool(sim) {
   const n = sim.player.toolInv[MAT.INGOT];
   if (!n) {
     sim.player.tool = "shovel";
@@ -414,7 +399,7 @@ function destOf(sim, belt) {
   return { x: belt.x + 1, y: belt.y - 1, sx: belt.x, sy: belt.y - 1 };
 }
 
-export function tickBelts(sim, dt) {
+function tickBelts(sim, dt) {
   sim.beltAcc += dt * BALANCE.beltPerSec;
   let steps = Math.floor(sim.beltAcc);
   if (steps <= 0) return;
@@ -448,7 +433,7 @@ export function tickBelts(sim, dt) {
   }
 }
 
-export function tickPumps(sim, dt) {
+function tickPumps(sim, dt) {
   if (sim.waterMode === "off") return;
   sim.pumpAcc += dt * BALANCE.pumpPerSec;
   let budget = Math.floor(sim.pumpAcc);
@@ -477,7 +462,7 @@ export function tickPumps(sim, dt) {
   }
 }
 
-export function tickPackages(sim, dt) {
+function tickPackages(sim, dt) {
   if (!sim.packages.length) return;
   const step = (48 / sim.cellCm) * dt;
   for (let i = 0; i < sim.packages.length; i++) {
@@ -496,7 +481,7 @@ export function tickPackages(sim, dt) {
   sim.packages = sim.packages.filter((p) => p.count > 0);
 }
 
-export function carryLine(sim) {
+function carryLine(sim) {
   const cap = carryCap(sim);
   const n = invCount(sim.player.inv);
   const parts = [];

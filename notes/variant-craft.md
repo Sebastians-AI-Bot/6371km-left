@@ -12,7 +12,7 @@ Preset in the debug panel: **Craft**. Hash: `#craft`.
 
 ## How to run
 
-`http://127.0.0.1:8765/prototype/index.html#craft`
+Open `prototype/index.html#craft`.
 
 Stand in the chamber, next to the station, and press E.
 
@@ -25,7 +25,7 @@ HUD `tool` reads `shovel` or `drill (1 ingot)`. `mass Δ` must stay 0 across the
 Same Chrome session (1820×1013, 12 Nov 2026).
 
 - At rest: fps 60, cells 460800, solid 358705, water 1960, entities 2, depth 104 cm, mass Δ 0.
-- Node selfcheck: ore beside the station becomes one ingot and one slag, and total mass is unchanged. The drill-versus-time-scale check in that file passed (drill ×0.35, time scale left out of the dig-time function).
+- Ore beside the station becomes one ingot and one slag, and the total mass stays unchanged. The drill is ×0.35. Time scale is a separate control and does not change that multiplier.
 
 ## Feel
 

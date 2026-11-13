@@ -11,7 +11,7 @@ Dig times do not change with the bucket. The shovel times are sand 0.08 s, soil 
 
 ## How to run
 
-`http://127.0.0.1:8765/prototype/index.html#bucket`
+Open `prototype/index.html#bucket`.
 
 F1, then Bucket, rebuilds the slice. The Haul control under Live switches hand / bucket / cart / belt without a rebuild.
 

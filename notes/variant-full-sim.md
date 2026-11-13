@@ -16,7 +16,7 @@ World mode A: every cell in the garden is simulated. No abstract packages.
 
 ## How to run
 
-`http://127.0.0.1:8765/prototype/index.html#full-sim`
+Open `prototype/index.html#full-sim`.
 
 This is the same page as the other presets. The World control can switch to the abstract shaft without a rebuild.
 

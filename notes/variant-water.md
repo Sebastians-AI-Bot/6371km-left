@@ -14,7 +14,7 @@ The lake is 70 cm × 28 cm of water (1960 cells), right of the shaft, behind roc
 
 ## How to run
 
-`http://127.0.0.1:8765/prototype/index.html#water`
+Open `prototype/index.html#water`.
 
 The Water control under Live applies immediately. It does not rebuild.
 
@@ -28,7 +28,7 @@ Same Chrome session (1820×1013, 12 Nov 2026).
 
 - At rest: fps 60, cells 460800, solid 358201, water 1960, entities 2, depth 146 cm, mass Δ 0.
 - The cell under the feet is soft rock. Shovel time there is 0.55 s (heat is off).
-- Node selfcheck: water placed over a hole flows down into it, and the total mass is unchanged. A seal is a soil cell that changed material, not a deleted cell.
+- Water placed over a hole flows down into it, and the total mass stays unchanged. A seal is a soil cell that changed material.
 
 ## Feel
 

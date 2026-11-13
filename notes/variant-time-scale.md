@@ -10,7 +10,7 @@ Preset in the debug panel: **Time scale**. Hash: `#time-scale`.
 
 ## How to run
 
-`http://127.0.0.1:8765/prototype/index.html#time-scale`
+Open `prototype/index.html#time-scale`.
 
 The Time scale control applies immediately and does not rebuild. HUD `time` shows the step.
 
