@@ -9,8 +9,8 @@
       --bg: #e6d7c8;
       --ink: #2b231d;
       --muted: #6d5c50;
-      --line: rgba(70, 48, 34, 0.16);
       --soil: #241810;
+      --size: 150px;
     }
 
     * { box-sizing: border-box; }
@@ -33,7 +33,7 @@
       display: flex;
       align-items: center;
       gap: 1.25rem;
-      padding: 0.85rem 1.25rem 0.35rem;
+      padding: 0.85rem 1.25rem 0.2rem;
     }
 
     h1 {
@@ -49,36 +49,8 @@
       font-size: 0.92rem;
     }
 
-    .switch {
-      display: flex;
-      margin-left: auto;
-      border: 1px solid #b7a496;
-      border-radius: 999px;
-      overflow: hidden;
-      background: rgba(255, 250, 244, 0.45);
-    }
-
-    .switch button {
-      font: inherit;
-      font-size: 0.92rem;
-      color: inherit;
-      background: transparent;
-      border: 0;
-      padding: 0.4rem 0.9rem;
-      cursor: pointer;
-    }
-
-    .switch button + button {
-      box-shadow: inset 1px 0 0 #b7a496;
-    }
-
-    .switch button[aria-pressed="true"] {
-      background: var(--soil);
-      color: #f6efe8;
-    }
-
     .ref-wrap {
-      margin: 0;
+      margin: 0 0 0 auto;
       text-align: center;
     }
 
@@ -97,42 +69,28 @@
       color: var(--muted);
     }
 
-    .views {
-      flex: 1;
-      min-height: 0;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-    }
-
-    .views[data-mode="cube"] { grid-template-columns: 1.65fr 0.75fr; }
-    .views[data-mode="stack"] { grid-template-columns: 0.75fr 1.65fr; }
-
-    .panel {
-      --size: min(42vh, 270px);
-      min-width: 0;
-      min-height: 0;
+    .controls {
       display: flex;
-      flex-direction: column;
-      padding: 0.35rem 1rem 0.8rem;
+      flex-wrap: wrap;
+      gap: 0.35rem 1.4rem;
+      padding: 0.35rem 1.25rem 0.2rem;
     }
 
-    .views[data-mode="cube"] .panel-cube,
-    .views[data-mode="stack"] .panel-stack {
-      --size: min(58vh, 390px);
+    .controls label {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      font-size: 0.92rem;
     }
 
-    .panel + .panel { box-shadow: inset 1px 0 0 var(--line); }
-
-    .panel h2 {
-      margin: 0;
-      font-size: 1.02rem;
-      font-weight: 600;
+    .controls input[type="range"] {
+      width: 148px;
+      accent-color: var(--soil);
     }
 
-    .panel .note {
-      margin: 0.15rem 0 0;
-      color: var(--muted);
-      font-size: 0.88rem;
+    .controls output {
+      min-width: 1.6rem;
+      font-variant-numeric: tabular-nums;
     }
 
     .viewport {
@@ -141,8 +99,8 @@
       position: relative;
       display: grid;
       place-items: center;
-      perspective: 1100px;
-      perspective-origin: 50% 42%;
+      perspective: 1200px;
+      perspective-origin: 50% 40%;
       cursor: grab;
       touch-action: none;
       user-select: none;
@@ -153,29 +111,39 @@
     .viewport::after {
       content: "";
       position: absolute;
-      left: 22%;
-      right: 22%;
-      bottom: 11%;
-      height: 14%;
+      left: 18%;
+      right: 18%;
+      bottom: 10%;
+      height: 16%;
       background: radial-gradient(ellipse, rgba(70, 46, 32, 0.28), transparent 70%);
       pointer-events: none;
     }
 
-    .cube, .stack {
-      width: var(--size);
-      height: var(--size);
-      position: relative;
+    .rig, .grid, .cube {
       transform-style: preserve-3d;
     }
 
-    .face, .slice {
+    .grid {
+      position: relative;
+      width: 0;
+      height: 0;
+    }
+
+    .cube {
+      position: absolute;
+      width: var(--size);
+      height: var(--size);
+      margin-left: calc(var(--size) / -2);
+      margin-top: calc(var(--size) / -2);
+    }
+
+    .face {
       position: absolute;
       inset: 0;
-      transform-style: preserve-3d;
       background: var(--soil);
     }
 
-    .face img, .slice img {
+    .face img {
       width: calc(100% + 2px);
       height: calc(100% + 2px);
       margin: -1px;
@@ -196,25 +164,10 @@
     /* The photo has no fourth side. A mirrored side cut fills the hidden face. */
     .right img { transform: scaleX(-1); }
 
-    .slice {
-      box-shadow: 0 0 0 2px #1a100c;
-    }
-
     footer {
       padding: 0 1.25rem 0.7rem;
       color: var(--muted);
       font-size: 0.85rem;
-    }
-
-    @media (max-width: 760px) {
-      header { flex-wrap: wrap; }
-      .switch { margin-left: 0; }
-      .views,
-      .views[data-mode="cube"],
-      .views[data-mode="stack"] { grid-template-columns: 1fr; }
-      .panel + .panel { box-shadow: inset 0 1px 0 var(--line); }
-      .views[data-mode="cube"] .panel-stack,
-      .views[data-mode="stack"] .panel-cube { display: none; }
     }
   </style>
 </head>
@@ -222,45 +175,36 @@
   <header>
     <div>
       <h1>Soil cube</h1>
-      <p>The photo is flat. Two ways to stand it up.</p>
-    </div>
-    <div class="switch" role="group" aria-label="Which look to feature">
-      <button type="button" data-mode="both">Both</button>
-      <button type="button" data-mode="cube">Mapped cube</button>
-      <button type="button" data-mode="stack">Slice stack</button>
+      <p>Mapped cubes, sitting next to each other. Rows run back.</p>
     </div>
     <figure class="ref-wrap">
-      <img class="ref" src="reference.png" alt="Reference photo of the soil cube">
+      <img class="ref" src="reference.png" alt="Reference photo of one soil cube">
       <figcaption>Reference</figcaption>
     </figure>
   </header>
 
-  <main class="views" data-mode="both">
-    <section class="panel panel-cube">
-      <h2>Mapped cube</h2>
-      <p class="note">Grass on top. The two cut faces on the front and the side.</p>
-      <div class="viewport" data-orbit="cube">
-        <div class="cube">
-          <div class="face front"><img src="face-front.png" alt=""></div>
-          <div class="face back"><img src="face-front.png" alt=""></div>
-          <div class="face right"><img src="face-side.png" alt=""></div>
-          <div class="face left"><img src="face-side.png" alt=""></div>
-          <div class="face top"><img src="face-top.png" alt=""></div>
-          <div class="face bottom"><img src="face-bottom.png" alt=""></div>
-        </div>
-      </div>
-    </section>
+  <div class="controls">
+    <label>Across
+      <input id="cols" type="range" min="1" max="8" value="3" step="1">
+      <output id="cols-out">3</output>
+    </label>
+    <label>Rows
+      <input id="rows" type="range" min="1" max="6" value="2" step="1">
+      <output id="rows-out">2</output>
+    </label>
+    <label>Spacing
+      <input id="gap" type="range" min="0" max="160" value="36" step="1">
+      <output id="gap-out">36</output>
+    </label>
+  </div>
 
-    <section class="panel panel-stack">
-      <h2>Slice stack</h2>
-      <p class="note">The front cut, six times, each shifted a little back.</p>
-      <div class="viewport" data-orbit="stack">
-        <div class="stack"></div>
-      </div>
-    </section>
+  <main class="viewport">
+    <div class="rig">
+      <div class="grid"></div>
+    </div>
   </main>
 
-  <footer>Drag to orbit. Scroll to zoom. The far sides of the cube repeat a cut, because the photo only shows three faces.</footer>
+  <footer>Drag to orbit. Scroll to zoom. The far sides of each cube repeat a cut, because the photo only shows three faces.</footer>
 
   <script>
     // Faces were cut from reference.png. Quads, in photo pixels, before a
@@ -268,119 +212,126 @@
     //   top:        left-top, back, right-top, front-top
     //   front cut:  front-top, right-top, right-bottom, front-bottom
     //   side cut:   left-top, front-top, front-bottom, left-bottom
-    // The stack repeats the front cut only.
 
     (function () {
-      var views = document.querySelector(".views");
-      var buttons = document.querySelectorAll(".switch button");
-      var SLICE_COUNT = 6;
+      var SIZE = 150;
+      var grid = document.querySelector(".grid");
+      var rig = document.querySelector(".rig");
+      var colsInput = document.getElementById("cols");
+      var rowsInput = document.getElementById("rows");
+      var gapInput = document.getElementById("gap");
+      var viewport = document.querySelector(".viewport");
 
-      var orbits = {
-        cube: { rx: -28, ry: -36, zoom: 1 },
-        stack: { rx: -16, ry: -24, zoom: 1 }
-      };
+      var state = { cols: 3, rows: 2, gap: 36, rx: -30, ry: -42, zoom: 1 };
+      var dragging = false;
+      var lastX = 0;
+      var lastY = 0;
 
-      function buildStack() {
-        var stack = document.querySelector(".stack");
-        var mid = (SLICE_COUNT - 1) / 2;
-        var i, slice, img, x, y, z;
-        for (i = SLICE_COUNT - 1; i >= 0; i--) {
-          slice = document.createElement("div");
-          slice.className = "slice";
-          img = document.createElement("img");
-          img.src = "face-front.png";
-          img.alt = "";
-          slice.appendChild(img);
-          x = (i - mid) * 4.2;
-          y = (i - mid) * 3.1;
-          z = (mid - i) * 7.5;
-          slice.style.transform =
-            "translate3d(" + x + "%, " + y + "%, calc(var(--size) * " + (z / 100) + "))";
-          stack.appendChild(slice);
+      function makeFace(className, src) {
+        var face = document.createElement("div");
+        var img = document.createElement("img");
+        face.className = "face " + className;
+        img.src = src;
+        img.alt = "";
+        face.appendChild(img);
+        return face;
+      }
+
+      function makeCube() {
+        var cube = document.createElement("div");
+        cube.className = "cube";
+        cube.appendChild(makeFace("front", "face-front.png"));
+        cube.appendChild(makeFace("back", "face-front.png"));
+        cube.appendChild(makeFace("right", "face-side.png"));
+        cube.appendChild(makeFace("left", "face-side.png"));
+        cube.appendChild(makeFace("top", "face-top.png"));
+        cube.appendChild(makeFace("bottom", "face-bottom.png"));
+        return cube;
+      }
+
+      function readControls() {
+        state.cols = Number(colsInput.value);
+        state.rows = Number(rowsInput.value);
+        state.gap = Number(gapInput.value);
+        document.getElementById("cols-out").textContent = String(state.cols);
+        document.getElementById("rows-out").textContent = String(state.rows);
+        document.getElementById("gap-out").textContent = String(state.gap);
+      }
+
+      function place() {
+        var need = state.cols * state.rows;
+        var step = SIZE + state.gap;
+        var r, c, i, cube, x, z;
+        while (grid.children.length > need) grid.removeChild(grid.lastChild);
+        while (grid.children.length < need) grid.appendChild(makeCube());
+        i = 0;
+        for (r = 0; r < state.rows; r++) {
+          for (c = 0; c < state.cols; c++) {
+            cube = grid.children[i];
+            x = (c - (state.cols - 1) / 2) * step;
+            z = ((state.rows - 1) / 2 - r) * step;
+            cube.style.transform = "translate3d(" + x + "px, 0px, " + z + "px)";
+            i += 1;
+          }
         }
       }
 
-      function applyOrbit(name) {
-        var state = orbits[name];
-        var target = document.querySelector('[data-orbit="' + name + '"] .cube, [data-orbit="' + name + '"] .stack');
-        target.style.transform =
-          "rotateX(" + state.rx + "deg) rotateY(" + state.ry + "deg) scale(" + state.zoom + ")";
+      function fitScale() {
+        var step = SIZE + state.gap;
+        var spanX = (state.cols - 1) * step + SIZE;
+        var spanZ = (state.rows - 1) * step + SIZE;
+        var span = Math.max(spanX, spanZ);
+        return Math.min(1.35, 680 / span);
       }
 
-      function setMode(mode) {
-        if (mode !== "cube" && mode !== "stack") mode = "both";
-        views.dataset.mode = mode;
-        var i;
-        for (i = 0; i < buttons.length; i++) {
-          buttons[i].setAttribute("aria-pressed", buttons[i].dataset.mode === mode ? "true" : "false");
-        }
-        if (history.replaceState) {
-          history.replaceState(null, "", "#" + mode);
-        } else {
-          location.hash = mode;
-        }
+      function applyView() {
+        var scale = fitScale() * state.zoom;
+        rig.style.transform =
+          "rotateX(" + state.rx + "deg) rotateY(" + state.ry + "deg) scale(" + scale + ")";
       }
 
-      function modeFromHash() {
-        var hash = (location.hash || "").replace("#", "");
-        setMode(hash);
+      function refresh() {
+        readControls();
+        place();
+        applyView();
       }
 
-      function attachOrbit(name) {
-        var viewport = document.querySelector('[data-orbit="' + name + '"]');
-        var dragging = false;
-        var lastX = 0;
-        var lastY = 0;
+      colsInput.addEventListener("input", refresh);
+      rowsInput.addEventListener("input", refresh);
+      gapInput.addEventListener("input", refresh);
 
-        viewport.addEventListener("pointerdown", function (event) {
-          dragging = true;
-          lastX = event.clientX;
-          lastY = event.clientY;
-          viewport.setPointerCapture(event.pointerId);
-        });
+      viewport.addEventListener("pointerdown", function (event) {
+        dragging = true;
+        lastX = event.clientX;
+        lastY = event.clientY;
+        viewport.setPointerCapture(event.pointerId);
+      });
 
-        viewport.addEventListener("pointermove", function (event) {
-          if (!dragging) return;
-          var state = orbits[name];
-          state.ry += (event.clientX - lastX) * 0.45;
-          state.rx += (event.clientY - lastY) * 0.35;
-          if (state.rx > 89) state.rx = 89;
-          if (state.rx < -89) state.rx = -89;
-          lastX = event.clientX;
-          lastY = event.clientY;
-          applyOrbit(name);
-        });
+      viewport.addEventListener("pointermove", function (event) {
+        if (!dragging) return;
+        state.ry += (event.clientX - lastX) * 0.45;
+        state.rx += (event.clientY - lastY) * 0.35;
+        if (state.rx > 89) state.rx = 89;
+        if (state.rx < -89) state.rx = -89;
+        lastX = event.clientX;
+        lastY = event.clientY;
+        applyView();
+      });
 
-        function endDrag() { dragging = false; }
-        viewport.addEventListener("pointerup", endDrag);
-        viewport.addEventListener("pointercancel", endDrag);
+      function endDrag() { dragging = false; }
+      viewport.addEventListener("pointerup", endDrag);
+      viewport.addEventListener("pointercancel", endDrag);
 
-        viewport.addEventListener("wheel", function (event) {
-          event.preventDefault();
-          var state = orbits[name];
-          var next = state.zoom * (event.deltaY > 0 ? 0.92 : 1.08);
-          if (next < 0.55) next = 0.55;
-          if (next > 2.4) next = 2.4;
-          state.zoom = next;
-          applyOrbit(name);
-        }, { passive: false });
-      }
+      viewport.addEventListener("wheel", function (event) {
+        event.preventDefault();
+        var next = state.zoom * (event.deltaY > 0 ? 0.92 : 1.08);
+        if (next < 0.35) next = 0.35;
+        if (next > 2.8) next = 2.8;
+        state.zoom = next;
+        applyView();
+      }, { passive: false });
 
-      var b;
-      for (b = 0; b < buttons.length; b++) {
-        buttons[b].addEventListener("click", function (event) {
-          setMode(event.currentTarget.dataset.mode);
-        });
-      }
-
-      window.addEventListener("hashchange", modeFromHash);
-
-      buildStack();
-      applyOrbit("cube");
-      applyOrbit("stack");
-      attachOrbit("cube");
-      attachOrbit("stack");
-      modeFromHash();
+      refresh();
     }());
   </script>
 </body>
