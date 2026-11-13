@@ -140,7 +140,7 @@
     .face {
       position: absolute;
       inset: 0;
-      background: var(--soil);
+      background: transparent;
     }
 
     .face img {
@@ -286,8 +286,10 @@
 
       function applyView() {
         var scale = fitScale() * state.zoom;
+        // scale() leaves depth at 1, so the cube flattens into a rectangle
+        // as you zoom. scale3d keeps width, height, and depth together.
         rig.style.transform =
-          "rotateX(" + state.rx + "deg) rotateY(" + state.ry + "deg) scale(" + scale + ")";
+          "rotateX(" + state.rx + "deg) rotateY(" + state.ry + "deg) scale3d(" + scale + ", " + scale + ", " + scale + ")";
       }
 
       function refresh() {
