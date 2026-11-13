@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Photo column</title>
+  <link rel="stylesheet" href="look.css">
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <p id="hud"></p>
+  <p id="hint">Wheel zoom · drag to pan · click a block</p>
+  <!-- Real photos. Window load waits for these before the first draw. -->
+  <div id="sources" hidden>
+    <img id="tex-topsoil" src="textures/topsoil.jpg" alt="">
+    <img id="tex-sand" src="textures/sand.jpg" alt="">
+    <img id="tex-limestone" src="textures/limestone.jpg" alt="">
+    <img id="tex-granite" src="textures/granite.jpg" alt="">
+    <img id="tex-pocket" src="textures/pocket.jpg" alt="">
+    <img id="tex-hot" src="textures/hot.jpg" alt="">
+    <img id="tex-ore" src="textures/ore.jpg" alt="">
+    <img id="tex-water" src="textures/water.jpg" alt="">
+  </div>
+  <script src="look.js"></script>
+</body>
+</html>
