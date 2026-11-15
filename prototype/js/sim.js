@@ -79,6 +79,11 @@ var BALANCE = {
   handCap: 8,
   bucketCap: 32,
   cartCap: 120,
+  pocketCap: 3,
+  sledCap: 48,
+  sledW: 14,
+  sledH: 8,
+  sledCm: 56,
   walkCm: 80,
   bucketWalkCm: 48,
   gravity: 2200,
@@ -148,7 +153,9 @@ function totalMass(sim) {
   for (let i = 0; i < g.length; i++) if (isMass(g[i])) n++;
   n += invCount(sim.player.inv);
   n += invCount(sim.player.toolInv);
+  if (sim.player.pocket) n += invCount(sim.player.pocket);
   if (sim.cart) n += invCount(sim.cart.inv);
+  if (sim.sled) n += invCount(sim.sled.inv);
   for (let i = 0; i < sim.packages.length; i++) n += sim.packages[i].count;
   return n;
 }
@@ -577,9 +584,11 @@ function freshPlayer(sim) {
     facing: "right",
     onGround: false,
     inv: emptyInv(),
+    pocket: emptyInv(),
     toolInv: emptyInv(),
     tool: "shovel",
     digT: 0,
+    trail: 1,
   };
 }
 
@@ -605,6 +614,21 @@ function placePlayer(sim, o) {
   if (p.y < 1) p.y = 1;
 }
 
+function placeSled(sim) {
+  const w = BALANCE.sledW / sim.cellCm;
+  const h = BALANCE.sledH / sim.cellCm;
+  const p = sim.player;
+  const sled = {
+    x: p.x - w - 2,
+    y: p.y + p.h - h,
+    w: w,
+    h: h,
+    inv: emptyInv(),
+  };
+  if (blockedBox(sim, sled.x, sled.y, w, h)) sled.y = p.y;
+  sim.sled = sled;
+}
+
 function placeCart(sim) {
   const w = BALANCE.cartW / sim.cellCm;
   const h = BALANCE.cartH / sim.cellCm;
@@ -626,6 +650,8 @@ function createSim(opts = {}) {
     w: tiny ? 40 : Math.floor(BALANCE.widthCm / cellCm),
     h: tiny ? 28 : Math.floor(BALANCE.heightCm / cellCm),
     haul: opts.haul || "hand",
+    digFeel: opts.digFeel === "jab" ? "jab" : "hold",
+    jabArmed: true,
     waterMode: opts.water || "off",
     heatMode: opts.heat || "off",
     gradient: opts.gradient != null ? opts.gradient : 22,
@@ -651,6 +677,7 @@ function createSim(opts = {}) {
     packages: [],
     player: null,
     cart: null,
+    sled: null,
     status: "",
     digX: -1,
     digY: -1,
@@ -683,6 +710,7 @@ function createSim(opts = {}) {
     });
     placeCart(sim);
     placePlayer(sim, opts);
+    if (sim.haul === "sled") placeSled(sim);
   }
   sim.baseMass = totalMass(sim);
   return sim;
@@ -805,6 +833,8 @@ function hitsBody(sim, x, y) {
   if (p && x + 1 > p.x && x < p.x + p.w && y + 1 > p.y && y < p.y + p.h) return true;
   const c = sim.cart;
   if (c && x + 1 > c.x && x < c.x + c.w && y + 1 > c.y && y < c.y + c.h) return true;
+  const d = sim.sled;
+  if (d && x + 1 > d.x && x < d.x + d.w && y + 1 > d.y && y < d.y + d.h) return true;
   return false;
 }
 
@@ -819,7 +849,7 @@ function tryDiag(sim, x, y, dir, m) {
 }
 
 function entityCount(sim) {
-  return 1 + (sim.cart ? 1 : 0) + sim.packages.length + sim.machines.length;
+  return 1 + (sim.cart ? 1 : 0) + (sim.sled ? 1 : 0) + sim.packages.length + sim.machines.length;
 }
 
 function tickWater(sim, dt) {

@@ -44,6 +44,8 @@ function containerInv(sim, kind) {
   if (kind === "inv") return sim.player.inv;
   if (kind === "tool") return sim.player.toolInv;
   if (kind === "cart") return sim.cart ? sim.cart.inv : null;
+  if (kind === "pocket") return sim.player.pocket;
+  if (kind === "sled") return sim.sled ? sim.sled.inv : null;
   return null;
 }
 
@@ -99,6 +101,19 @@ function give(sim, to, mat, n) {
     if (k > 0) sim.cart.inv[mat] += k;
     return k;
   }
+  if (to.kind === "pocket") {
+    const room = BALANCE.pocketCap - invCount(sim.player.pocket);
+    const k = Math.min(Math.max(0, room), n);
+    if (k > 0) sim.player.pocket[mat] += k;
+    return k;
+  }
+  if (to.kind === "sled") {
+    if (!sim.sled) return 0;
+    const room = BALANCE.sledCap - invCount(sim.sled.inv);
+    const k = Math.min(Math.max(0, room), n);
+    if (k > 0) sim.sled.inv[mat] += k;
+    return k;
+  }
   if (to.kind === "tool") {
     sim.player.toolInv[mat] += n;
     if (mat === MAT.INGOT) sim.player.tool = "drill";
@@ -131,14 +146,17 @@ function excavate(sim, x, y) {
     say(sim, sim.shafts < 2 ? "one shaft" : "can't dig there");
     return false;
   }
-  const intoHand = moveCells(sim, { kind: "cell", x, y }, { kind: "inv" }, mat, 1);
-  if (intoHand) {
+  const routed = digRoute(sim);
+  const into = moveCells(sim, { kind: "cell", x, y }, routed.dest, mat, 1);
+  if (into) {
     sim.stats.dug++;
     sim.stats.excavated++;
+    if (routed.hauled) sim.stats.hauled++;
+    if (routed.note) say(sim, routed.note);
     return true;
   }
-  // Hands are full. The spare cell goes to the surface heap, away from the
-  // hole, so it stays in the world and does not fall back under the feet.
+  // The container is full, or the pile beside the body had no air.
+  // The spare cell goes to the surface heap, away from the hole.
   const spilled = moveCells(
     sim,
     { kind: "cell", x, y },
@@ -150,7 +168,7 @@ function excavate(sim, x, y) {
     sim.stats.dug++;
     sim.stats.excavated++;
     sim.stats.hauled++;
-    say(sim, "hands full, spilled to the heap");
+    say(sim, routed.fullNote);
     return true;
   }
   say(sim, "no room");
@@ -169,8 +187,50 @@ function dumpInv(sim, kind, x, y) {
   return moved;
 }
 
+function pileBeside(sim) {
+  const p = sim.player;
+  return {
+    kind: "spill",
+    x: Math.floor(p.x) - 2,
+    y: Math.floor(p.y + p.h - 1),
+  };
+}
+
+function sledInReach(sim) {
+  const a = sim.player;
+  const b = sim.sled;
+  if (!b) return false;
+  const pad = 10;
+  return a.x < b.x + b.w + pad && a.x + a.w + pad > b.x
+    && a.y < b.y + b.h + pad && a.y + a.h + pad > b.y;
+}
+
+// Where a dug cell goes. Hands are the default. Pocket, heap, and sled
+// are the opening alternatives.
+function digRoute(sim) {
+  if (sim.haul === "pocket") {
+    return { dest: { kind: "pocket" }, hauled: false, note: "", fullNote: "pocket full, spilled" };
+  }
+  if (sim.haul === "heap") {
+    return { dest: pileBeside(sim), hauled: true, note: "dropped into the pile", fullNote: "pile blocked, spilled" };
+  }
+  if (sim.haul === "sled") {
+    if (sledInReach(sim)) {
+      return { dest: { kind: "sled" }, hauled: false, note: "", fullNote: "sled full, spilled" };
+    }
+    return { dest: pileBeside(sim), hauled: true, note: "sled too far, dropped", fullNote: "sled too far, spilled" };
+  }
+  return { dest: { kind: "inv" }, hauled: false, note: "", fullNote: "hands full, spilled to the heap" };
+}
+
 function dump(sim) {
   const face = facingCell(sim);
+  if (sim.haul === "pocket") return dumpNamed(sim, "pocket", face.x, face.y, "pocket");
+  if (sim.haul === "sled" && sim.sled) {
+    const x = Math.floor(sim.sled.x + sim.sled.w / 2);
+    const y = Math.floor(sim.sled.y);
+    return dumpNamed(sim, "sled", x, y - 1, "sled");
+  }
   if (sim.haul === "cart" && sim.cart && bodiesNear(sim.player, sim.cart) && invCount(sim.cart.inv) > 0) {
     const x = Math.floor(sim.cart.x + sim.cart.w / 2);
     const y = Math.floor(sim.cart.y + sim.cart.h);
@@ -188,6 +248,53 @@ function dump(sim) {
   }
   say(sim, n ? "dumped " + n : "nothing to dump");
   return n;
+}
+
+function dumpNamed(sim, kind, x, y, label) {
+  let n = dumpInv(sim, kind, x, y);
+  const inv = containerInv(sim, kind);
+  if (!n && inv && invCount(inv) > 0) {
+    n = dumpInv(sim, kind, sim.heapCell, sim.surfaceCell - 1);
+    say(sim, n ? "dumped " + n + " on the heap" : "dump blocked");
+    return n;
+  }
+  say(sim, n ? label + " dumped " + n : "nothing to dump");
+  return n;
+}
+
+function tickSled(sim, dt) {
+  const d = sim.sled;
+  if (!d) return;
+  const p = sim.player;
+  const dir = p.trail || 1;
+  const goalX = p.x - dir * (d.w + 1);
+  const goalY = p.onGround ? p.y + p.h - d.h : d.y;
+  const dx = goalX - d.x;
+  const dy = goalY - d.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 0.04) return;
+  const step = Math.min(dist, (BALANCE.sledCm * dt) / sim.cellCm);
+  const nx = d.x + (dx / dist) * step;
+  const ny = d.y + (dy / dist) * step;
+  if (!blockedBox(sim, nx, ny, d.w, d.h)) {
+    d.x = nx;
+    d.y = ny;
+  } else if (!blockedBox(sim, nx, d.y, d.w, d.h)) {
+    d.x = nx;
+  } else if (!blockedBox(sim, d.x, ny, d.w, d.h)) {
+    d.y = ny;
+  }
+}
+
+function separateSled(sim) {
+  const p = sim.player;
+  const d = sim.sled;
+  if (!d) return;
+  const overlapX = p.x < d.x + d.w && p.x + p.w > d.x;
+  const overlapY = p.y < d.y + d.h && p.y + p.h > d.y;
+  if (!overlapX || !overlapY) return;
+  const push = (p.trail || 1) * 0.45;
+  if (!blockedBox(sim, d.x - push, d.y, d.w, d.h)) d.x -= push;
 }
 
 function bodiesNear(a, b) {
@@ -490,5 +597,7 @@ function carryLine(sim) {
   }
   const cartN = sim.cart ? invCount(sim.cart.inv) : 0;
   const toolN = sim.player.toolInv[MAT.INGOT] || 0;
-  return { n, cap, cartN, toolN, haul: sim.haul };
+  const pocketN = sim.player.pocket ? invCount(sim.player.pocket) : 0;
+  const sledN = sim.sled ? invCount(sim.sled.inv) : 0;
+  return { n, cap, cartN, toolN, pocketN, sledN, haul: sim.haul };
 }

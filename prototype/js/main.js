@@ -31,6 +31,8 @@ function boot(id) {
   rates.frames = 0;
   rates.fps = 0;
   if (location.hash !== "#" + preset.id) location.hash = preset.id;
+  const hint = document.getElementById("hint");
+  if (hint) hint.textContent = hintText(preset.id);
   mountPanel(panel, sim, hooks);
   globalThis.__km = {
     sim, boot, PRESETS, BALANCE, MAT,
@@ -64,12 +66,21 @@ const hooks = {
       follow: sim.follow,
       depthStyle: sim.depthStyle,
       volume: sim.volume,
+      digFeel: sim.digFeel,
     });
     sim.camKeys = camKeys();
     mountPanel(panel, sim, hooks);
     globalThis.__km.sim = sim;
   },
 };
+
+function hintText(id) {
+  if (id === "jab") return "A/D move · W jump · S face down · tap F or the mouse for one cell, then release · G dump · F1 debug";
+  if (id === "pocket") return "A/D move · W jump · S face down · hold F, dirt goes into the pocket (3) · G dumps the pocket · F1 debug";
+  if (id === "heap") return "A/D move · W jump · S face down · hold F, dirt drops into a pile beside you · F1 debug";
+  if (id === "sled") return "A/D move · W jump · S face down · hold F beside the sled · it follows as you walk · G dumps the sled · F1 debug";
+  return "A/D move · W jump · W into a wall climbs · S face down · hold mouse or F to dig · G dump · E use · K seal · P pump · O cooler · L belt · T drop drill · [ ] zoom · F1 debug";
+}
 
 function typedTarget(event) {
   const tag = event.target && event.target.tagName;
@@ -218,6 +229,7 @@ function controlPlayer() {
     ax += 1;
     p.facing = "right";
   }
+  if (ax !== 0) p.trail = ax > 0 ? 1 : -1;
   if (keys.s || keys.arrowdown) p.facing = "down";
   if ((keys.w || keys.arrowup) && !keys.s && !keys.a && !keys.d && !keys.arrowleft && !keys.arrowright) {
     p.facing = "up";
@@ -234,7 +246,12 @@ function controlPlayer() {
   }
 }
 
+function strokeDown() {
+  return mouse.down || !!keys.f || !!keys[" "];
+}
+
 function diggingTarget() {
+  if (sim.digFeel === "jab" && !sim.jabArmed) return null;
   if (mouse.down && mouse.inside) {
     const cell = screenToCell(view, sim, mouse.x, mouse.y);
     const adj = adjacentCell(sim, cell.x, cell.y);
@@ -260,9 +277,14 @@ function step(dt) {
     sim.statusT -= dt;
     if (sim.statusT <= 0) sim.status = "";
   }
+  if (sim.digFeel === "jab" && !strokeDown()) sim.jabArmed = true;
   controlPlayer();
   moveBody(sim.player, dt);
   separateCart();
+  if (sim.sled) {
+    tickSled(sim, dt);
+    separateSled(sim);
+  }
   if (sim.cart) {
     sim.cart.vx = 0;
     moveBody(sim.cart, dt);
@@ -273,6 +295,7 @@ function step(dt) {
     if (sim.digP >= 1) {
       excavate(sim, target.x, target.y);
       sim.digP = 0;
+      if (sim.digFeel === "jab") sim.jabArmed = false;
     }
   } else if (target) {
     sim.digX = target.x;

@@ -103,6 +103,114 @@ var PRESETS = [
     kitBelt: 30,
   },
   {
+    id: "jab",
+    label: "Jab",
+    haul: "hand",
+    digFeel: "jab",
+    water: "off",
+    heat: "off",
+    craft: false,
+    craftAt: "station",
+    worldMode: "full",
+    shafts: 1,
+    chamber: "free",
+    timeScale: 1,
+    cellCm: 1,
+    zoom: 8,
+    depthStyle: "cm",
+    volume: false,
+    follow: true,
+    predig: false,
+    predigDeep: false,
+    belts: false,
+    seedPackages: false,
+    gradient: 22,
+    kitPump: 0,
+    kitCooler: 0,
+    kitBelt: 0,
+  },
+  {
+    id: "pocket",
+    label: "Pocket",
+    haul: "pocket",
+    digFeel: "hold",
+    water: "off",
+    heat: "off",
+    craft: false,
+    craftAt: "station",
+    worldMode: "full",
+    shafts: 1,
+    chamber: "free",
+    timeScale: 1,
+    cellCm: 1,
+    zoom: 8,
+    depthStyle: "cm",
+    volume: false,
+    follow: true,
+    predig: false,
+    predigDeep: false,
+    belts: false,
+    seedPackages: false,
+    gradient: 22,
+    kitPump: 0,
+    kitCooler: 0,
+    kitBelt: 0,
+  },
+  {
+    id: "heap",
+    label: "Heap",
+    haul: "heap",
+    digFeel: "hold",
+    water: "off",
+    heat: "off",
+    craft: false,
+    craftAt: "station",
+    worldMode: "full",
+    shafts: 1,
+    chamber: "free",
+    timeScale: 1,
+    cellCm: 1,
+    zoom: 8,
+    depthStyle: "cm",
+    volume: false,
+    follow: true,
+    predig: false,
+    predigDeep: false,
+    belts: false,
+    seedPackages: false,
+    gradient: 22,
+    kitPump: 0,
+    kitCooler: 0,
+    kitBelt: 0,
+  },
+  {
+    id: "sled",
+    label: "Sled",
+    haul: "sled",
+    digFeel: "hold",
+    water: "off",
+    heat: "off",
+    craft: false,
+    craftAt: "station",
+    worldMode: "full",
+    shafts: 1,
+    chamber: "free",
+    timeScale: 1,
+    cellCm: 1,
+    zoom: 8,
+    depthStyle: "cm",
+    volume: false,
+    follow: true,
+    predig: false,
+    predigDeep: false,
+    belts: false,
+    seedPackages: false,
+    gradient: 22,
+    kitPump: 0,
+    kitCooler: 0,
+    kitBelt: 0,
+  },
+  {
     id: "water",
     label: "Water",
     haul: "bucket",
@@ -296,7 +404,7 @@ function hudText(sim, rates) {
     "cells " + cells.grid + "   solid " + cells.solid + "   water " + cells.water,
     "entities " + entityCount(sim) + "   pkg " + packageCells(sim),
     "px dug/s " + rates.dugS.toFixed(1) + "   spoil/s " + rates.haulS.toFixed(1),
-    "carry " + carry.n + "/" + carry.cap + "   cart " + carry.cartN + "/" + BALANCE.cartCap,
+    carryReadout(sim, carry),
     "tool " + sim.player.tool + (carry.toolN ? " (" + carry.toolN + " ingot)" : "")
       + "   time " + sim.timeScale + "×",
     "mass Δ " + massDelta(sim),
@@ -307,8 +415,19 @@ function hudText(sim, rates) {
     lines.push("heat " + sim.heatMode + "   " + t.toFixed(0) + "°C   grad " + sim.gradient + "°C/m");
   }
   if (sim.status) lines.push(sim.status);
-  lines.push(sim.preset + " · " + sim.worldMode + " · " + sim.haul + " · " + sim.cellCm + " cm/cell · depth " + Math.round(depthCm(sim)) + " cm");
+  lines.push(sim.preset + " · " + sim.digFeel + " · " + sim.worldMode + " · " + sim.haul + " · " + sim.cellCm + " cm/cell · depth " + Math.round(depthCm(sim)) + " cm");
   return lines.join("\n");
+}
+
+function carryReadout(sim, carry) {
+  if (sim.haul === "pocket") {
+    return "pocket " + carry.pocketN + "/" + BALANCE.pocketCap + "   hands " + carry.n + "/" + carry.cap;
+  }
+  if (sim.haul === "heap") return "heap drop   hands " + carry.n + "/" + carry.cap;
+  if (sim.haul === "sled") {
+    return "sled " + carry.sledN + "/" + BALANCE.sledCap + "   hands " + carry.n + "/" + carry.cap;
+  }
+  return "carry " + carry.n + "/" + carry.cap + "   cart " + carry.cartN + "/" + BALANCE.cartCap;
 }
 
 function packageCells(sim) {
@@ -381,6 +500,9 @@ function mountPanel(panel, sim, hooks) {
     { value: "bucket", label: "Bucket (32)" },
     { value: "cart", label: "Cart (120) + hands" },
     { value: "belt", label: "Belt + hands (8)" },
+    { value: "pocket", label: "Pocket (3)" },
+    { value: "heap", label: "Heap (drop)" },
+    { value: "sled", label: "Sled (48)" },
   ], (v) => hooks.onLive({ haul: v })));
 
   panel.appendChild(select("Water", sim.waterMode, [
@@ -445,17 +567,20 @@ function mountPanel(panel, sim, hooks) {
 
   const help = document.createElement("p");
   help.className = "note";
-  help.textContent = "A/D move. W jumps, and climbs when you hold it into a wall. S faces down. Hold the mouse or F to dig the facing cell. G dumps in front of you (or the cart, in cart mode, when you are beside it). E uses the bench or station, loads the cart, or picks up an ingot. K seals with soil or sand. P pump, O cooler, L belt, T sets the drill down. [ ] zoom. IJKL moves a free camera. F1 hides this panel.";
+  help.textContent = "A/D move. W jumps, and climbs when you hold it into a wall. S faces down. Hold the mouse or F to dig. Jab is one cell per press: release before the next. Pocket keeps 3 cells on the body. Heap drops each cell into a pile beside you. Sled holds 48 and follows when you walk; stay beside it to load it. G dumps hands, the pocket, the sled, or the cart. E uses the bench or station, loads the cart, or picks up an ingot. K seals. P pump, O cooler, L belt, T sets the drill down. [ ] zoom. IJKL moves a free camera. F1 hides this panel.";
   panel.appendChild(help);
 
   const nums = document.createElement("p");
   nums.className = "note";
-  nums.textContent = "Hand 8, bucket 32, cart 120. Dig times (shovel): sand 0.08s, soil 0.22s, soft 0.55s, hard 1.3s, ore 0.9s. Drill ×0.35, separate from time scale. Slice is 1 m thick: a 1 cm cell is 0.1 L. Heat gradient is exaggerated so a few metres can slow the tool.";
+  nums.textContent = "Hand 8, bucket 32, cart 120, pocket 3, sled 48. Dig times (shovel): sand 0.08s, soil 0.22s, soft 0.55s, hard 1.3s, ore 0.9s. A jab uses that same time and then waits for a new press. Drill ×0.35, separate from time scale. Slice is 1 m thick: a 1 cm cell is 0.1 L. Heat gradient is exaggerated so a few metres can slow the tool.";
   panel.appendChild(nums);
 }
 
 function applyLive(sim, patch) {
-  if (patch.haul) sim.haul = patch.haul;
+  if (patch.haul) {
+    sim.haul = patch.haul;
+    if (patch.haul === "sled" && !sim.sled) placeSled(sim);
+  }
   if (patch.waterMode) sim.waterMode = patch.waterMode;
   if (patch.heatMode) sim.heatMode = patch.heatMode;
   if (patch.gradient != null) sim.gradient = patch.gradient;

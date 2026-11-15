@@ -158,6 +158,7 @@ function render(view, sim) {
 
   drawAbstractLine(ctx, view, sim, z);
   drawCart(ctx, view, sim, z);
+  drawSled(ctx, view, sim, z);
   drawPackages(ctx, view, sim, z);
   drawPlayer(ctx, view, sim, z);
   drawDepth(ctx, view, sim);
@@ -187,6 +188,24 @@ function drawCart(ctx, view, sim, z) {
   ctx.fillRect(x, y, c.w * z, c.h * z);
   ctx.fillStyle = "#3a3a3a";
   ctx.fillRect(x, y + c.h * z * 0.72, c.w * z, c.h * z * 0.28);
+}
+
+function drawSled(ctx, view, sim, z) {
+  const d = sim.sled;
+  if (!d) return;
+  const x = (d.x - view.camX) * z;
+  const y = (d.y - view.camY) * z;
+  ctx.fillStyle = "#c4a46a";
+  ctx.fillRect(x, y, d.w * z, d.h * z);
+  ctx.fillStyle = "#5c4630";
+  ctx.fillRect(x + z * 0.4, y + d.h * z * 0.62, d.w * z - z * 0.8, d.h * z * 0.22);
+  const p = sim.player;
+  ctx.strokeStyle = "rgba(70, 48, 28, 0.85)";
+  ctx.lineWidth = Math.max(1, view.dpr);
+  ctx.beginPath();
+  ctx.moveTo(x + d.w * z * 0.5, y + d.h * z * 0.2);
+  ctx.lineTo((p.x + p.w * 0.5 - view.camX) * z, (p.y + p.h * 0.45 - view.camY) * z);
+  ctx.stroke();
 }
 
 function drawPackages(ctx, view, sim, z) {
@@ -230,6 +249,15 @@ function drawPlayer(ctx, view, sim, z) {
     ty = y + h;
   }
   ctx.fillRect(tx, ty, tw, th);
+  if (sim.haul === "pocket") {
+    const n = invCount(p.pocket);
+    ctx.fillStyle = "#3c3428";
+    ctx.fillRect(x + w * 0.22, y + h * 0.3, w * 0.56, h * 0.4);
+    for (let i = 0; i < BALANCE.pocketCap; i++) {
+      ctx.fillStyle = i < n ? "#e6c46a" : "#2a241c";
+      ctx.fillRect(x + w * 0.3, y + h * 0.36 + i * h * 0.11, w * 0.4, h * 0.07);
+    }
+  }
 }
 
 function drawDepth(ctx, view, sim) {
