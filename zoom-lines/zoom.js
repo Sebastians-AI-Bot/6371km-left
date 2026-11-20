@@ -1,6 +1,7 @@
 /* Line section for "6.371 km left".
    Open index.html in a browser (no server). The wheel zooms from the
-   10 m² patch to a section of the Earth. Keys 1, 2 and 3 jump. */
+   10 m² patch to a section of the Earth. Keys 1, 2 and 3 jump
+   to the soils, the crust, and the globe. */
 
 (function () {
   "use strict";
@@ -10,24 +11,57 @@
   var PATCH = Math.sqrt(10);
   var PIT_W = 1.2;
   var PIT_D = 0.22;
-  var TOPSOIL = 0.3;
-  var SUBSOIL = 1.5;
-
   var PAPER = "#f3f0e8";
   var INK = "#3a4654";
   var MID = "#5c6c7c";
   var FAINT = "#8e9bab";
   var HAIR = "#b7c0c8";
+  var HATCH = "#667688";
+
+  /* Simplified continental column. Depths are the base of each unit, in metres.
+     Fluids are pockets, not shells. Patterns that would only repeat a neighbour
+     (peat, silt, till, dolomite, salt, the other igneous names, eclogite,
+     coal, iron ore) are left out. */
+  var COLUMN = [
+    { to: 0.3, name: "topsoil", hatch: "roots" },
+    { to: 1.2, name: "clay", hatch: "clay" },
+    { to: 3, name: "sand", hatch: "sand" },
+    { to: 8, name: "gravel", hatch: "gravel" },
+    { to: 60, name: "shale", hatch: "shale" },
+    { to: 400, name: "sandstone", hatch: "sandstone" },
+    { to: 2000, name: "limestone", hatch: "limestone" },
+    { to: 15000, name: "granite", hatch: "granite" },
+    { to: 35000, name: "gneiss", hatch: "gneiss" },
+    { to: 410000, name: "peridotite", hatch: "peridotite" },
+    { to: 660000, name: "transition", hatch: "transition" },
+    { to: 2740000, name: "lower mantle", hatch: "mantle" },
+    { to: 2890000, name: "D''", hatch: "dlayer" },
+    { to: 5150000, name: "outer core", hatch: "outer" },
+    { to: 6371000, name: "inner core", hatch: "inner" }
+  ];
+
+  var POCKETS = [
+    { name: "water", hatch: "groundwater", d0: 1.65, d1: 2.25, x0: -0.35, x1: 2.15 },
+    { name: "gas", hatch: "gas", d0: 32, d1: 52, x0: -320, x1: 280 },
+    { name: "oil", hatch: "oil", d0: 120, d1: 190, x0: -480, x1: 520 },
+    { name: "brine", hatch: "brine", d0: 7000, d1: 11000, x0: -4000, x1: 4000 },
+    { name: "magma", hatch: "magma", d0: 37000, d1: 47000, x0: -8000, x1: 8000 }
+  ];
 
   var LAYERS = [
-    { depth: TOPSOIL, name: "topsoil", rank: "local" },
-    { depth: SUBSOIL, name: "subsoil", rank: "local" },
-    { depth: 12, name: "rockhead", rank: "local" },
-    { depth: 24400, name: "Moho", rank: "shell" },
-    { depth: 80000, name: "lithosphere", rank: "shell", dash: true },
+    { depth: 0.3 },
+    { depth: 1.2 },
+    { depth: 3 },
+    { depth: 8 },
+    { depth: 60 },
+    { depth: 400 },
+    { depth: 2000 },
+    { depth: 15000 },
+    { depth: 35000, name: "Moho", rank: "shell" },
     { depth: 410000, name: "410 km", rank: "shell", dash: true },
     { depth: 660000, name: "660 km", rank: "shell", dash: true },
-    { depth: 2891000, name: "core–mantle", rank: "shell" },
+    { depth: 2740000, name: "D''", rank: "shell", dash: true },
+    { depth: 2890000, name: "core–mantle", rank: "shell" },
     { depth: 5150000, name: "inner core", rank: "shell" }
   ];
 
@@ -264,30 +298,423 @@
     return out;
   }
 
+
+  function depthY(depth, x) {
+    var r = R - depth;
+    if (r <= 0) return R;
+    var under = r * r - x * x;
+    if (under <= 0) return R;
+    return R - Math.sqrt(under);
+  }
+
+  function ringMode(v, d0) {
+    var px = (R - d0) * v.px;
+    if (px > 5000 || px < 8) return false;
+    var c = worldToScreen(v, 0, R);
+    return c.y > v.box.y - 30 && c.y < v.box.y + v.box.h + 30;
+  }
+
+  function visiblePx(v, d0, d1) {
+    if (ringMode(v, d0)) return (d1 - d0) * v.px;
+    var top = Math.max(d0, v.top);
+    var bot = Math.min(d1, v.top + v.worldH);
+    if (bot <= top) return 0;
+    return (bot - top) * v.px;
+  }
+
+  function clipRing(v, d0, d1) {
+    var c = worldToScreen(v, 0, R);
+    var px0 = Math.max(0.5, (R - d0) * v.px);
+    var px1 = Math.max(0, (R - d1) * v.px);
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, px0, 0, Math.PI * 2, false);
+    if (px1 > 0.8) ctx.arc(c.x, c.y, px1, 0, Math.PI * 2, true);
+    ctx.clip("evenodd");
+  }
+
+  function clipStrip(v, d0, d1, x0, x1) {
+    var n = 28;
+    var pts = [];
+    var i;
+    var x;
+    for (i = 0; i <= n; i++) {
+      x = x0 + (x1 - x0) * (i / n);
+      pts.push([x, depthY(d0, x)]);
+    }
+    for (i = n; i >= 0; i--) {
+      x = x0 + (x1 - x0) * (i / n);
+      pts.push([x, depthY(d1, x)]);
+    }
+    var s = screenPoly(v, pts);
+    ctx.beginPath();
+    ctx.moveTo(s[0].x, s[0].y);
+    for (i = 1; i < s.length; i++) ctx.lineTo(s[i].x, s[i].y);
+    ctx.closePath();
+    ctx.clip();
+  }
+
+  function stripBox(v, d0, d1, x0, x1) {
+    var minX = Infinity;
+    var minY = Infinity;
+    var maxX = -Infinity;
+    var maxY = -Infinity;
+    var n = 16;
+    for (var i = 0; i <= n; i++) {
+      var x = x0 + (x1 - x0) * (i / n);
+      var p0 = worldToScreen(v, x, depthY(d0, x));
+      var p1 = worldToScreen(v, x, depthY(d1, x));
+      minX = Math.min(minX, p0.x, p1.x);
+      maxX = Math.max(maxX, p0.x, p1.x);
+      minY = Math.min(minY, p0.y, p1.y);
+      maxY = Math.max(maxY, p0.y, p1.y);
+    }
+    var xA = Math.max(v.box.x, minX);
+    var yA = Math.max(v.box.y, minY);
+    var xB = Math.min(v.box.x + v.box.w, maxX);
+    var yB = Math.min(v.box.y + v.box.h, maxY);
+    return { x: xA, y: yA, w: Math.max(0, xB - xA), h: Math.max(0, yB - yA) };
+  }
+
+  function ringBox(v, d0) {
+    var c = worldToScreen(v, 0, R);
+    var px = (R - d0) * v.px;
+    var xA = Math.max(v.box.x, c.x - px);
+    var yA = Math.max(v.box.y, c.y - px);
+    var xB = Math.min(v.box.x + v.box.w, c.x + px);
+    var yB = Math.min(v.box.y + v.box.h, c.y + px);
+    return { x: xA, y: yA, w: Math.max(0, xB - xA), h: Math.max(0, yB - yA) };
+  }
+
+  function hatchInk() {
+    ctx.strokeStyle = HATCH;
+    ctx.fillStyle = HATCH;
+    ctx.lineWidth = 0.75;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.setLineDash([]);
+  }
+
+  function horizontals(box, spacing, dash) {
+    ctx.setLineDash(dash || []);
+    var y0 = Math.floor(box.y / spacing) * spacing;
+    for (var y = y0; y < box.y + box.h + spacing; y += spacing) {
+      strokeLine(box.x - 4, y, box.x + box.w + 4, y);
+    }
+    ctx.setLineDash([]);
+  }
+
+  function waves(box, spacing, amp, freq, dash, yShift) {
+    ctx.setLineDash(dash || []);
+    var y0 = Math.floor(box.y / spacing) * spacing + (yShift || 0);
+    var steps = Math.max(12, Math.ceil((box.w + 12) / 7));
+    for (var y = y0; y < box.y + box.h + spacing; y += spacing) {
+      ctx.beginPath();
+      for (var i = 0; i <= steps; i++) {
+        var x = box.x - 6 + (box.w + 12) * (i / steps);
+        var yy = y + Math.sin(x * freq) * amp;
+        if (i === 0) ctx.moveTo(x, yy);
+        else ctx.lineTo(x, yy);
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+
+  function dots(box, step, r) {
+    var x0 = Math.floor(box.x / step) * step;
+    var y0 = Math.floor(box.y / step) * step;
+    var row = 0;
+    for (var y = y0; y < box.y + box.h + step; y += step) {
+      var shift = (row % 2) * step * 0.5;
+      for (var x = x0; x < box.x + box.w + step; x += step) {
+        ctx.beginPath();
+        ctx.arc(x + shift, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      row++;
+    }
+  }
+
+  function scatter(box, step, draw) {
+    var x0 = Math.floor(box.x / step) * step;
+    var y0 = Math.floor(box.y / step) * step;
+    var row = 0;
+    for (var y = y0; y < box.y + box.h + step; y += step) {
+      var shift = (row % 2) * step * 0.5;
+      for (var x = x0 - step; x < box.x + box.w + step; x += step) draw(x + shift, y);
+      row++;
+    }
+  }
+
+  function unitHash(x, y) {
+    var n = Math.sin(x * 0.017 + y * 0.013) * 43758.5453;
+    return n - Math.floor(n);
+  }
+
+  var PATTERNS = {
+    roots: function (box) {
+      scatter(box, 28, function (x, y) {
+        var h = unitHash(x, y);
+        var s = 0.8 + h * 0.45;
+        x += (h - 0.5) * 8;
+        y += (unitHash(y, x) - 0.5) * 4;
+        ctx.beginPath();
+        ctx.moveTo(x, y - 2 * s);
+        ctx.lineTo(x, y + 3 * s);
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - 4.2 * s, y + 3.4 * s);
+        ctx.moveTo(x, y + 0.6 * s);
+        ctx.lineTo(x + 3.6 * s, y + 3.6 * s);
+        ctx.moveTo(x, y - 0.4 * s);
+        ctx.lineTo(x - 3.2 * s, y - 2.6 * s);
+        ctx.stroke();
+      });
+    },
+    clay: function (box) { horizontals(box, 8, null); },
+    sand: function (box) { dots(box, 11, 0.7); },
+    gravel: function (box) {
+      scatter(box, 22, function (x, y) {
+        var h = unitHash(x, y);
+        var jx = (h - 0.5) * 8;
+        var jy = (unitHash(y, x) - 0.5) * 6;
+        ctx.beginPath();
+        ctx.ellipse(x + jx, y + jy, 2.4 + h * 2.2, 1.7 + (1 - h) * 1.5, (h - 0.5) * 1.1, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+    },
+    shale: function (box) { horizontals(box, 7, [5, 4]); },
+    sandstone: function (box) { horizontals(box, 11, [9, 7]); },
+    limestone: function (box) {
+      var course = 13;
+      var brick = 22;
+      var y0 = Math.floor(box.y / course) * course;
+      var row = 0;
+      for (var y = y0; y < box.y + box.h + course; y += course) {
+        strokeLine(box.x - 2, y, box.x + box.w + 2, y);
+        var shift = (row % 2) * brick * 0.5;
+        var x0 = Math.floor((box.x - shift) / brick) * brick + shift;
+        for (var x = x0; x < box.x + box.w + brick; x += brick) strokeLine(x, y, x, y + course);
+        row++;
+      }
+    },
+    granite: function (box) {
+      scatter(box, 22, function (x, y) {
+        strokeLine(x - 3.2, y, x + 3.2, y);
+        strokeLine(x, y - 3.2, x, y + 3.2);
+      });
+    },
+    gneiss: function (box) { waves(box, 12, 2.4, 0.28, null, 0); },
+    peridotite: function (box) {
+      scatter(box, 26, function (x, y) {
+        var s = 4.2;
+        var t = 3.1;
+        ctx.beginPath();
+        ctx.moveTo(x, y - s);
+        ctx.lineTo(x + t, y - s * 0.45);
+        ctx.lineTo(x + t, y + s * 0.55);
+        ctx.lineTo(x, y + s);
+        ctx.lineTo(x - t, y + s * 0.55);
+        ctx.lineTo(x - t, y - s * 0.45);
+        ctx.closePath();
+        ctx.moveTo(x, y - s);
+        ctx.lineTo(x, y + s);
+        ctx.moveTo(x - t, y - s * 0.45);
+        ctx.lineTo(x + t, y - s * 0.45);
+        ctx.stroke();
+      });
+    },
+    transition: function (box) {
+      var spacing = 12;
+      var reach = box.w + box.h + spacing;
+      ctx.beginPath();
+      for (var d = -reach; d < reach; d += spacing) {
+        ctx.moveTo(box.x + d, box.y - 4);
+        ctx.lineTo(box.x + d - box.h - 8, box.y + box.h + 4);
+        ctx.moveTo(box.x + d, box.y - 4);
+        ctx.lineTo(box.x + d + box.h + 8, box.y + box.h + 4);
+      }
+      ctx.stroke();
+    },
+    mantle: function (box) {
+      scatter(box, 18, function (x, y) {
+        ctx.beginPath();
+        ctx.moveTo(x, y - 3.4);
+        ctx.lineTo(x + 3.2, y + 2.4);
+        ctx.lineTo(x - 3.2, y + 2.4);
+        ctx.closePath();
+        ctx.stroke();
+      });
+    },
+    dlayer: function (box) { waves(box, 8, 2.6, 0.52, null, 0); },
+    outer: function (box) { waves(box, 9, 3.4, 0.16, null, 0); },
+    inner: function (box) {
+      var r = 7;
+      var dx = r * 1.75;
+      var dy = r * 1.52;
+      var y0 = Math.floor(box.y / dy) * dy;
+      var row = 0;
+      for (var y = y0; y < box.y + box.h + dy; y += dy) {
+        var shift = (row % 2) * dx * 0.5;
+        var x0 = Math.floor((box.x - shift) / dx) * dx + shift;
+        for (var x = x0; x < box.x + box.w + dx; x += dx) {
+          ctx.beginPath();
+          for (var k = 0; k < 6; k++) {
+            var a = Math.PI / 6 + k * Math.PI / 3;
+            var px = x + r * Math.cos(a);
+            var py = y + r * Math.sin(a);
+            if (k === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.stroke();
+        }
+        row++;
+      }
+    },
+    groundwater: function (box) {
+      waves(box, 9, 2.2, 0.35, [7, 4], 0);
+      dots(box, 16, 1.05);
+    },
+    gas: function (box) {
+      scatter(box, 16, function (x, y) {
+        ctx.beginPath();
+        ctx.arc(x, y, 2.3, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+    },
+    oil: function (box) {
+      waves(box, 8, 2.1, 0.42, [3, 3], 0);
+      dots(box, 13, 1.15);
+    },
+    brine: function (box) {
+      waves(box, 9, 2.2, 0.33, null, 0);
+      scatter(box, 16, function (x, y) {
+        ctx.strokeRect(x - 1.7, y - 1.7, 3.4, 3.4);
+      });
+    },
+    magma: function (box) {
+      waves(box, 7, 3.2, 0.2, null, 0);
+      waves(box, 7, 1.5, 0.48, null, 3.5);
+    }
+  };
+
+  function paintRegion(v, d0, d1, patternName, x0, x1, paper) {
+    var tall = visiblePx(v, d0, d1);
+    if (tall < (x0 == null ? 18 : 14)) return false;
+    var ring = x0 == null && ringMode(v, d0);
+    var top = v.top;
+    var bot = v.top + v.worldH;
+    if (!ring && (d1 < top || d0 > bot)) return false;
+    var inside = !ring && x0 == null && d0 <= Math.max(0, top) + 0.01 && d1 >= Math.min(R, bot) - 0.01;
+    var wx0 = x0 == null ? v.left : x0;
+    var wx1 = x1 == null ? v.left + v.worldW : x1;
+    ctx.save();
+    if (ring) clipRing(v, d0, d1);
+    else if (!inside) clipStrip(v, d0, d1, wx0, wx1);
+    var box = inside ? { x: v.box.x, y: v.box.y, w: v.box.w, h: v.box.h }
+      : (ring ? ringBox(v, d0) : stripBox(v, d0, d1, wx0, wx1));
+    if (box.w < 2 || box.h < 2) {
+      ctx.restore();
+      return false;
+    }
+    if (paper) {
+      ctx.fillStyle = PAPER;
+      ctx.fillRect(box.x - 8, box.y - 8, box.w + 16, box.h + 16);
+    }
+    hatchInk();
+    var draw = PATTERNS[patternName];
+    if (draw) draw(box);
+    ctx.restore();
+    return true;
+  }
+
+  function labelPoint(v, d0, d1, pocket) {
+    if (pocket) {
+      var p = worldToScreen(v, (pocket.x0 + pocket.x1) / 2, (d0 + d1) / 2);
+      return { x: p.x, y: p.y, align: "center" };
+    }
+    if (ringMode(v, d0)) {
+      var c = worldToScreen(v, 0, R);
+      var outer = (R - d0) * v.px;
+      if (d1 >= R - 1) return { x: c.x, y: c.y + outer + 16, align: "center" };
+      var inner = Math.max(0, (R - d1) * v.px);
+      var rm = (outer + inner) * 0.5;
+      var ang = Math.PI * 0.78;
+      return {
+        x: c.x + Math.cos(ang) * rm,
+        y: c.y - Math.sin(ang) * rm,
+        align: "center"
+      };
+    }
+    var top = Math.max(d0, v.top);
+    var bot = Math.min(d1, v.top + v.worldH);
+    return { x: v.box.x + 18, y: worldToScreen(v, 0, (top + bot) / 2).y, align: "left" };
+  }
+
+  function drawMaterials(v, tb) {
+    var labels = [];
+    var from = 0;
+    var i;
+    for (i = 0; i < COLUMN.length; i++) {
+      var unit = COLUMN[i];
+      var drew = paintRegion(v, from, unit.to, unit.hatch, null, null, false);
+      if (drew && visiblePx(v, from, unit.to) >= 22) {
+        labels.push({ name: unit.name, d0: from, d1: unit.to, pocket: null });
+      }
+      from = unit.to;
+    }
+    for (i = 0; i < POCKETS.length; i++) {
+      var pocket = POCKETS[i];
+      var ok = paintRegion(v, pocket.d0, pocket.d1, pocket.hatch, pocket.x0, pocket.x1, true);
+      if (ok && visiblePx(v, pocket.d0, pocket.d1) >= 26) {
+        labels.push({ name: pocket.name, d0: pocket.d0, d1: pocket.d1, pocket: pocket });
+      }
+    }
+    setFont(12);
+    ctx.textBaseline = "middle";
+    var used = [];
+    for (i = 0; i < labels.length; i++) {
+      var item = labels[i];
+      var pt = labelPoint(v, item.d0, item.d1, item.pocket);
+      if (pt.y < v.box.y + 12 || pt.y > v.box.y + v.box.h - 12) continue;
+      if (pt.x < v.box.x + 8 || pt.x > v.box.x + v.box.w - 8) continue;
+      if (inBlock(tb, pt.x, pt.y, 12)) continue;
+      var clash = false;
+      for (var j = 0; j < used.length; j++) {
+        if (Math.abs(used[j].y - pt.y) < 16 && Math.abs(used[j].x - pt.x) < 140) {
+          clash = true;
+          break;
+        }
+      }
+      if (clash) continue;
+      var tw = ctx.measureText(item.name).width;
+      var rx = pt.align === "center" ? pt.x - tw / 2 : pt.x;
+      ctx.fillStyle = PAPER;
+      ctx.fillRect(rx - 3, pt.y - 8, tw + 6, 16);
+      ctx.fillStyle = INK;
+      ctx.textAlign = pt.align;
+      ctx.fillText(item.name, pt.x, pt.y);
+      used.push(pt);
+    }
+  }
+
+
   function drawHatch(v) {
-    var half = PATCH / 2;
+    if (!(PIT_D * v.px > 6 && PIT_W * v.px > 14)) return;
     var pit = PIT_W / 2;
-    var band = TOPSOIL * v.px;
-    if (band > 5 && PATCH * v.px > 24) {
-      var yL = surfaceY(-half);
-      var yR = surfaceY(half);
-      hatch(screenPoly(v, [
-        [-half, yL],
-        [half, yR],
-        [half, yR + TOPSOIL],
-        [-half, yL + TOPSOIL]
-      ]), 8, Math.PI / 4);
-    }
-    if (PIT_D * v.px > 6 && PIT_W * v.px > 14) {
-      var sL = surfaceY(-pit);
-      var sR = surfaceY(pit);
-      hatch(screenPoly(v, [
-        [-pit, sL],
-        [pit, sR],
-        [pit, sR + PIT_D],
-        [-pit, sL + PIT_D]
-      ]), 5, -Math.PI / 4);
-    }
+    var sL = surfaceY(-pit);
+    var sR = surfaceY(pit);
+    var pts = [[-pit, sL], [pit, sR], [pit, sR + PIT_D], [-pit, sL + PIT_D]];
+    var sp = screenPoly(v, pts);
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(sp[0].x, sp[0].y);
+    for (var i = 1; i < sp.length; i++) ctx.lineTo(sp[i].x, sp[i].y);
+    ctx.closePath();
+    ctx.fillStyle = PAPER;
+    ctx.fill();
+    ctx.restore();
+    hatch(sp, 5, -Math.PI / 4);
   }
 
   function layerSeparated(kept, radius, pxPerM) {
@@ -504,6 +931,7 @@
 
     for (var i = 0; i < LAYERS.length; i++) {
       var layer = LAYERS[i];
+      if (!layer.name) continue;
       if (layer.depth * v.px < 18) continue;
       if (layer.rank === "local" && layer.depth * v.px < 28) continue;
       var lenText = formatLength(layer.depth);
@@ -717,7 +1145,7 @@
 
   function widthForLock(aspect) {
     if (lock === "near") return nearWidth();
-    if (lock === "middle") return 250000 * aspect;
+    if (lock === "middle") return 60000 * aspect;
     if (lock === "globe") return farWidth(aspect);
     return null;
   }
@@ -739,6 +1167,7 @@
 
     ctx.save();
     clipSheet(v.box);
+    drawMaterials(v, tb);
     drawHatch(v);
     drawLayers(v);
     drawPitAndSurfaceCut(v);
@@ -760,7 +1189,7 @@
 
   function applyPreset(name) {
     if (name === "near" || name === "1") lock = "near";
-    else if (name === "middle" || name === "2") lock = "middle";
+    else if (name === "middle" || name === "crust" || name === "2") lock = "middle";
     else if (name === "globe" || name === "3") lock = "globe";
     else return false;
     draw();
@@ -810,7 +1239,10 @@
     },
     state: function () {
       var aspect = sheetBox().w / Math.max(1, sheetBox().h);
-      var worldW = clamp(Math.pow(10, logW), nearWidth(), farWidth(aspect));
+      var forced = widthForLock(aspect);
+      var worldW = forced === null
+        ? clamp(Math.pow(10, logW), nearWidth(), farWidth(aspect))
+        : forced;
       var v = viewOf(worldW);
       return {
         worldW: v.worldW,
