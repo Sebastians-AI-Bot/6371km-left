@@ -76,7 +76,6 @@
   /* 0 is the opening 3 m frame. 1 is the centre of the Earth. */
   var scrollT = 0;
   var OPEN_DEPTH = 3;
-  var OPEN_SKY = 0.2;
   /* Presented frames, not a tight redraw loop. A bucket of about a tenth
      of a second: frames in the bucket divided by the time those frames spanned. */
   var fpsLabel = "— fps";
@@ -100,12 +99,20 @@
     return 2.75 * R * Math.max(aspect, 1);
   }
 
-  function openWorldH() {
-    return OPEN_DEPTH / (1 - OPEN_SKY);
+  /* Sky above the surface, as a fraction of the sheet, so the horizon
+     sits one third of the way down the screen. Zoom changes the scale,
+     not this fraction. */
+  function skyFraction(box) {
+    var fromTop = cssH / 3 - box.y;
+    return clamp(fromTop / Math.max(1, box.h), 0.08, 0.8);
   }
 
-  function shallowTop() {
-    return -OPEN_SKY * openWorldH();
+  function openWorldH(box) {
+    return OPEN_DEPTH / (1 - skyFraction(box));
+  }
+
+  function shallowTop(worldH, box) {
+    return -skyFraction(box) * worldH;
   }
 
   function clamp(v, a, b) {
@@ -182,12 +189,10 @@
     var box = sheetBox();
     var aspect = box.w / Math.max(1, box.h);
     var worldH = worldW / aspect;
-    var top0 = shallowTop();
+    var top0 = shallowTop(worldH, box);
     var top1 = R - worldH;
-    var top;
-    if (top1 <= top0) {
-      top = R - worldH / 2;
-    } else {
+    var top = top0;
+    if (top1 > top0) {
       var t = clamp(scrollT, 0, 1);
       var bot0 = top0 + worldH;
       var bot = bot0 * Math.pow(R / Math.max(bot0, 0.05), t);
@@ -363,6 +368,33 @@
     ctx.arc(c.x, c.y, px0, 0, Math.PI * 2, false);
     if (px1 > 0.8) ctx.arc(c.x, c.y, px1, 0, Math.PI * 2, true);
     ctx.clip("evenodd");
+  }
+
+  /* Hatches stay inside the earth. A huge radius is drawn as the surface
+     arc across the view; the disk itself is used once it fits. */
+  function clipBelowSurface(v) {
+    var c = worldToScreen(v, 0, R);
+    var rad = R * v.px;
+    ctx.beginPath();
+    if (rad < 800000) {
+      ctx.arc(c.x, c.y, Math.max(1, rad), 0, Math.PI * 2);
+      ctx.clip();
+      return;
+    }
+    var n = 48;
+    var left = v.left;
+    var right = v.left + v.worldW;
+    var p = worldToScreen(v, left, depthY(0, left));
+    ctx.moveTo(v.box.x, v.box.y + v.box.h);
+    ctx.lineTo(p.x, p.y);
+    for (var i = 1; i <= n; i++) {
+      var x = left + (right - left) * (i / n);
+      p = worldToScreen(v, x, depthY(0, x));
+      ctx.lineTo(p.x, p.y);
+    }
+    ctx.lineTo(v.box.x + v.box.w, v.box.y + v.box.h);
+    ctx.closePath();
+    ctx.clip();
   }
 
   function clipStrip(v, d0, d1, x0, x1) {
@@ -856,6 +888,8 @@
     var labels = [];
     var from = 0;
     var i;
+    ctx.save();
+    clipBelowSurface(v);
     for (i = 0; i < COLUMN.length; i++) {
       var unit = COLUMN[i];
       var drew = paintRegion(v, from, unit.to, unit.hatch, null, null, false);
@@ -871,6 +905,7 @@
         labels.push({ name: pocket.name, d0: pocket.d0, d1: pocket.d1, pocket: pocket });
       }
     }
+    ctx.restore();
     setFont(12);
     ctx.textBaseline = "middle";
     var used = [];
@@ -1345,7 +1380,7 @@
   }
 
   function widthForLock(aspect) {
-    if (lock === "near") return openWorldH() * aspect;
+    if (lock === "near") return openWorldH(sheetBox()) * aspect;
     if (lock === "middle") return 60000 * aspect;
     if (lock === "globe") return farWidth(aspect);
     return null;
@@ -1355,21 +1390,22 @@
   var stripHot = -1;
   var stripDrag = false;
 
-  function scrollStripGeom(tb) {
-    var n = 21;
-    var y0 = tb.y + 7;
-    var y1 = tb.y + tb.h - 7;
+  function scrollStripGeom() {
+    var pad = 12;
+    var y0 = pad;
+    var y1 = Math.max(y0 + 40, cssH - pad);
+    var n = Math.max(24, Math.round((y1 - y0) / 8) + 1);
     var maxLen = 41;
-    var axis = tb.x - 8 - maxLen / 2;
+    var right = cssW - 10;
     return {
-      x: axis - maxLen / 2 - 8,
-      y: tb.y,
-      w: maxLen + 16,
-      h: tb.h,
+      x: right - maxLen - 8,
+      y: 0,
+      w: maxLen + 18,
+      h: cssH,
       n: n,
       y0: y0,
       y1: y1,
-      axis: axis
+      right: right
     };
   }
 
@@ -1386,8 +1422,8 @@
     return Math.pow(u, 1.7);
   }
 
-  function drawScrollStrip(tb) {
-    var g = scrollStripGeom(tb);
+  function drawScrollStrip() {
+    var g = scrollStripGeom();
     stripGeom = g;
     var active = scrollT * (g.n - 1);
     var center = stripHot >= 0 ? stripHot : active;
@@ -1411,7 +1447,7 @@
       ctx.lineWidth = w > 0.8 ? 2.4 : w > 0.45 ? 1.75 : w > 0.05 ? 1.25 : 1;
       ctx.lineCap = "butt";
       ctx.setLineDash([]);
-      strokeLine(g.axis - mark.len / 2, mark.y, g.axis + mark.len / 2, mark.y);
+      strokeLine(g.right - mark.len, mark.y, g.right, mark.y);
     }
   }
 
@@ -1471,7 +1507,7 @@
     ctx.restore();
 
     drawFrame(v, tb);
-    drawScrollStrip(tb);
+    drawScrollStrip();
     drawFps();
   }
 
