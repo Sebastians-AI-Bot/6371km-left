@@ -1359,11 +1359,12 @@
     var n = 21;
     var y0 = tb.y + 7;
     var y1 = tb.y + tb.h - 7;
-    var axis = tb.x - 20;
+    var maxLen = 41;
+    var axis = tb.x - 8 - maxLen / 2;
     return {
-      x: axis - 28,
+      x: axis - maxLen / 2 - 8,
       y: tb.y,
-      w: 36,
+      w: maxLen + 16,
       h: tb.h,
       n: n,
       y0: y0,
@@ -1376,11 +1377,13 @@
     return clamp((y - g.y0) / Math.max(1, g.y1 - g.y0), 0, 1) * (g.n - 1);
   }
 
+  /* 1 under the pointer, then a clear step down across the next three ticks. */
   function dockWeight(dist) {
     var a = Math.abs(dist);
-    var reach = 2.7;
+    var reach = 4;
     if (a >= reach) return 0;
-    return Math.cos((a / reach) * Math.PI * 0.5);
+    var u = 1 - a / reach;
+    return Math.pow(u, 1.7);
   }
 
   function drawScrollStrip(tb) {
@@ -1388,16 +1391,27 @@
     stripGeom = g;
     var active = scrollT * (g.n - 1);
     var center = stripHot >= 0 ? stripHot : active;
+    var rest = 7;
+    var grow = 34;
     var i;
+    var marks = [];
     for (i = 0; i < g.n; i++) {
-      var y = g.y0 + (g.y1 - g.y0) * (i / (g.n - 1));
       var w = dockWeight(i - center);
-      var len = 8 + w * 20;
-      ctx.strokeStyle = w > 0.82 ? INK : w > 0.45 ? MID : w > 0.16 ? FAINT : HAIR;
-      ctx.lineWidth = 1.05 + w * 0.85;
-      ctx.lineCap = "round";
+      marks.push({
+        y: g.y0 + (g.y1 - g.y0) * (i / (g.n - 1)),
+        w: w,
+        len: rest + w * grow
+      });
+    }
+    marks.sort(function (a, b) { return a.w - b.w; });
+    for (i = 0; i < marks.length; i++) {
+      var mark = marks[i];
+      var w = mark.w;
+      ctx.strokeStyle = w > 0.8 ? INK : w > 0.45 ? MID : w > 0.05 ? FAINT : "#b7c0c8";
+      ctx.lineWidth = w > 0.8 ? 2.4 : w > 0.45 ? 1.75 : w > 0.05 ? 1.25 : 1;
+      ctx.lineCap = "butt";
       ctx.setLineDash([]);
-      strokeLine(g.axis - len / 2, y, g.axis + len / 2, y);
+      strokeLine(g.axis - mark.len / 2, mark.y, g.axis + mark.len / 2, mark.y);
     }
   }
 
