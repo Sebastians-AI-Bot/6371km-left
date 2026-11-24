@@ -16,8 +16,51 @@
   var INK = "#3a4654";
   var MID = "#5c6c7c";
   var FAINT = "#8e9bab";
-  var HAIR = "#b7c0c8";
+  var HAIRLINE = "#b7c0c8";
   var HATCH = "#667688";
+  var FRAME = "#c9c3b6";
+  var THEME_KEY = "zoom-lines-theme";
+  var dark = false;
+
+  /* Same six inks, with the paper and the marks exchanged. */
+  function invertHex(hex) {
+    var v = (0xffffff ^ parseInt(hex.slice(1), 16)).toString(16);
+    while (v.length < 6) v = "0" + v;
+    return "#" + v;
+  }
+
+  function applyTheme(next) {
+    dark = !!next;
+    var paper = "#f3f0e8";
+    var ink = "#3a4654";
+    var mid = "#5c6c7c";
+    var faint = "#8e9bab";
+    var hairline = "#b7c0c8";
+    var hatch = "#667688";
+    var frame = "#c9c3b6";
+    PAPER = dark ? invertHex(paper) : paper;
+    INK = dark ? invertHex(ink) : ink;
+    MID = dark ? invertHex(mid) : mid;
+    FAINT = dark ? invertHex(faint) : faint;
+    HAIRLINE = dark ? invertHex(hairline) : hairline;
+    HATCH = dark ? invertHex(hatch) : hatch;
+    FRAME = dark ? invertHex(frame) : frame;
+    var ground = PAPER;
+    document.documentElement.style.background = ground;
+    if (document.body) document.body.style.background = ground;
+    patternCache = {};
+    patternCount = 0;
+  }
+
+  function readTheme() {
+    try { return localStorage.getItem(THEME_KEY) === "dark"; }
+    catch (e) { return false; }
+  }
+
+  function writeTheme() {
+    try { localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); }
+    catch (e) {}
+  }
 
   /* Simplified continental column. Depths are the base of each unit, in metres.
      Fluids are pockets, not shells. Patterns that would only repeat a neighbour
@@ -1577,7 +1620,7 @@
     var box = v.box;
     ctx.save();
     ctx.setLineDash([]);
-    ctx.strokeStyle = "#c9c3b6";
+    ctx.strokeStyle = FRAME;
     ctx.lineWidth = 1.25;
     ctx.strokeRect(box.x - 6, box.y - 6, box.w + 12, box.h + 12);
     ctx.lineWidth = 0.6;
@@ -1623,7 +1666,61 @@
     ctx.fillStyle = FAINT;
     ctx.textAlign = "left";
     ctx.fillText("wheel zooms    1  2  3", tb.x + 12, tb.y + tb.h - 10);
+    drawThemeIcon(tb);
     ctx.restore();
+  }
+
+  var themeHit = null;
+
+  /* Moon while the drawing is light, sun while it is dark. Same ink. */
+  function drawThemeIcon(tb) {
+    var s = 15;
+    var x = tb.x + tb.w - 14 - s;
+    var y = tb.y + (46 - s) / 2;
+    themeHit = { x: x - 5, y: y - 5, w: s + 10, h: s + 10 };
+    ctx.save();
+    ctx.fillStyle = INK;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.15;
+    ctx.lineCap = "round";
+    ctx.setLineDash([]);
+    if (dark) drawSun(x, y, s);
+    else drawMoon(x, y, s);
+    ctx.restore();
+  }
+
+  function drawMoon(x, y, s) {
+    var cx = x + s * 0.46;
+    var cy = y + s * 0.5;
+    var r = s * 0.40;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2, false);
+    ctx.arc(cx + r * 0.48, cy - r * 0.08, r * 0.80, 0, Math.PI * 2, true);
+    ctx.fill();
+  }
+
+  function drawSun(x, y, s) {
+    var cx = x + s / 2;
+    var cy = y + s / 2;
+    var r = s * 0.22;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    var n = 8;
+    var i;
+    for (i = 0; i < n; i++) {
+      var a = (i / n) * Math.PI * 2 - Math.PI / 2;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * (r + 1.7), cy + Math.sin(a) * (r + 1.7));
+      ctx.lineTo(cx + Math.cos(a) * (r + 3.5), cy + Math.sin(a) * (r + 3.5));
+      ctx.stroke();
+    }
+  }
+
+  function pointerOnTheme(x, y) {
+    var g = themeHit;
+    if (!g) return false;
+    return x >= g.x && x <= g.x + g.w && y >= g.y && y <= g.y + g.h;
   }
 
   function widthForLock(aspect) {
@@ -1731,7 +1828,7 @@
     for (i = 0; i < marks.length; i++) {
       var mark = marks[i];
       var w = mark.w;
-      ctx.strokeStyle = w > 0.8 ? INK : w > 0.45 ? MID : w > 0.05 ? FAINT : "#b7c0c8";
+      ctx.strokeStyle = w > 0.8 ? INK : w > 0.45 ? MID : w > 0.05 ? FAINT : HAIRLINE;
       ctx.lineWidth = w > 0.8 ? 1.45 : w > 0.45 ? 1.2 : 1;
       ctx.lineCap = "butt";
       ctx.setLineDash([]);
@@ -1932,7 +2029,7 @@
       if (stripGeom) stripHot = stripIndexAt(stripGeom, p.y);
       return;
     }
-    if (pointerOnDebug(p.x, p.y)) {
+    if (pointerOnDebug(p.x, p.y) || pointerOnTheme(p.x, p.y)) {
       canvas.style.cursor = "pointer";
       return;
     }
@@ -1950,6 +2047,12 @@
     var p = pointerXY(event);
     if (pointerOnDebug(p.x, p.y)) {
       debugOpen = !debugOpen;
+      event.preventDefault();
+      return;
+    }
+    if (pointerOnTheme(p.x, p.y)) {
+      applyTheme(!dark);
+      writeTheme();
       event.preventDefault();
       return;
     }
@@ -2007,6 +2110,7 @@
     }
   };
 
+  applyTheme(readTheme());
   resize();
   readLocation();
   window.addEventListener("load", readLocation);

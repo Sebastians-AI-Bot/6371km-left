@@ -19,6 +19,20 @@
     touch-action: none;
   }
 </style>
+<script>
+/* Apply a saved dark ground before the first paint. The colour is the
+   invert of the paper, not a second palette. */
+(function () {
+  var dark = false;
+  try { dark = localStorage.getItem("zoom-lines-theme") === "dark"; } catch (e) {}
+  if (!dark) return;
+  var v = (0xffffff ^ parseInt("f3f0e8", 16)).toString(16);
+  while (v.length < 6) v = "0" + v;
+  var s = document.createElement("style");
+  s.textContent = "html,body{background:#" + v + "}";
+  document.head.appendChild(s);
+})();
+</script>
 </head>
 <body>
 <canvas id="sheet" aria-label="Line section from a 10 square metre patch out to the Earth"></canvas>
