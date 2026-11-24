@@ -1,7 +1,8 @@
 /* Line section for "6.371 km left".
    Open index.html in a browser (no server). The wheel zooms from the
-   10 m² patch to a section of the Earth. Keys 1, 2 and 3 jump
-   to the soils, the crust, and the globe. */
+   10 m² patch to a section of the Earth. Hold Alt and the wheel
+   scrolls the section. Keys 1, 2 and 3 jump to the soils, the crust,
+   and the globe. */
 
 (function () {
   "use strict";
@@ -1474,6 +1475,9 @@
   var stripGeom = null;
   var stripHot = -1;
   var stripDrag = false;
+  /* Set for the frame after an Alt-wheel, so the raised tick tracks the
+     scrolled depth instead of the pointer. */
+  var wheelLift = false;
 
   function scrollStripGeom() {
     var pad = 12;
@@ -1547,7 +1551,8 @@
     var g = scrollStripGeom();
     stripGeom = g;
     var active = Math.max(0, Math.min(g.n - 1, scrollT * (g.n - 1)));
-    var center = stripHot >= 0 ? Math.round(stripHot) : Math.round(active);
+    var center = (wheelLift || stripHot < 0) ? Math.round(active) : Math.round(stripHot);
+    wheelLift = false;
     var half = liftHalf(worldW, g.n);
     var rest = 15;
     var grow = 15;
@@ -1584,6 +1589,14 @@
     var g = stripGeom;
     if (!g) return;
     scrollT = clamp((y - g.y0) / Math.max(1, g.y1 - g.y0), 0, 1);
+  }
+
+  /* Alt-wheel scrolls. One notch (deltaY 100) is 1/100 of the way from
+     the 3 m frame to the centre, the same number of metres at every depth. */
+  function scrollByWheel(dy) {
+    var t = clamp(scrollT, 0, 1);
+    scrollT = clamp(t + dy * 0.0001, 0, 1);
+    wheelLift = true;
   }
 
   function drawFps() {
@@ -1734,7 +1747,8 @@
     if (event.deltaMode === 1) dy *= 16;
     else if (event.deltaMode === 2) dy *= 400;
     pointerY = event.clientY;
-    zoomBy(dy);
+    if (event.altKey) scrollByWheel(dy);
+    else zoomBy(dy);
   }, { passive: false });
 
   function pointerXY(event) {
