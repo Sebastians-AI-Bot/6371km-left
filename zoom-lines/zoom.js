@@ -153,6 +153,18 @@
     return trimNum(cm.toFixed(cm >= 10 ? 0 : 1)) + " cm";
   }
 
+  function formatTickDepth(meters) {
+    var m = Math.min(R, Math.max(0, meters));
+    if (m >= 1000) {
+      var km = m / 1000;
+      if (km >= 100) return groupInt(Math.round(km)) + " km";
+      if (km >= 10) return trimNum(km.toFixed(1)) + " km";
+      return trimNum(km.toFixed(2)) + " km";
+    }
+    if (m >= 10) return trimNum(m.toFixed(1)) + " m";
+    return trimNum(m.toFixed(2)) + " m";
+  }
+
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     cssW = Math.max(1, window.innerWidth);
@@ -185,7 +197,7 @@
     };
   }
 
-  function viewOf(worldW) {
+  function placedView(worldW, t) {
     var box = sheetBox();
     var aspect = box.w / Math.max(1, box.h);
     var worldH = worldW / aspect;
@@ -193,9 +205,8 @@
     var top1 = R - worldH;
     var top = top0;
     if (top1 > top0) {
-      var t = clamp(scrollT, 0, 1);
       var bot0 = top0 + worldH;
-      var bot = bot0 * Math.pow(R / Math.max(bot0, 0.05), t);
+      var bot = bot0 * Math.pow(R / Math.max(bot0, 0.05), clamp(t, 0, 1));
       top = clamp(bot - worldH, top0, top1);
     }
     return {
@@ -206,6 +217,16 @@
       top: top,
       px: box.w / worldW
     };
+  }
+
+  function viewOf(worldW) {
+    return placedView(worldW, scrollT);
+  }
+
+  /* Depth at the bottom of the frame if the strip were dragged to t. */
+  function tickDepth(worldW, t) {
+    var v = placedView(worldW, t);
+    return Math.min(R, Math.max(0, v.top + v.worldH));
   }
 
   function worldToScreen(v, x, y) {
@@ -1413,26 +1434,52 @@
     return clamp((y - g.y0) / Math.max(1, g.y1 - g.y0), 0, 1) * (g.n - 1);
   }
 
-  /* 1 under the pointer, then a clear step down across the next three ticks. */
-  function dockWeight(dist) {
-    var a = Math.abs(dist);
-    var reach = 4;
-    if (a >= reach) return 0;
-    var u = 1 - a / reach;
-    return Math.pow(u, 1.7);
+  /* How many ticks, either side of the pointer, leave the short rest.
+     Zoomed in, only the tick under the pointer. Zoomed out to the globe,
+     the whole strip. Halfway along the log zoom, about half the ticks. */
+  function liftHalf(worldW, n) {
+    var aspect = sheetBox().w / Math.max(1, sheetBox().h);
+    var log0 = Math.log(closeWidth());
+    var log1 = Math.log(farWidth(aspect));
+    var t = clamp((Math.log(Math.max(worldW, closeWidth())) - log0) / Math.max(1e-6, log1 - log0), 0, 1);
+    return 0.72 + (n * 0.95 - 0.72) * Math.pow(t, 1.6);
   }
 
-  function drawScrollStrip() {
+  function dockWeight(dist, half) {
+    var a = Math.abs(dist);
+    if (a >= half) return 0;
+    var u = 1 - a / half;
+    return Math.pow(u, 0.55);
+  }
+
+  function drawTickDepth(g, worldW) {
+    if (stripHot < 0) return;
+    var t = clamp(stripHot / Math.max(1, g.n - 1), 0, 1);
+    var text = formatTickDepth(tickDepth(worldW, t));
+    var y = g.y0 + (g.y1 - g.y0) * t;
+    setFont(13);
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    var tw = ctx.measureText(text).width;
+    var tx = g.right - 52;
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(tx - tw - 5, y - 9, tw + 8, 18);
+    ctx.fillStyle = INK;
+    ctx.fillText(text, tx, y);
+  }
+
+  function drawScrollStrip(worldW) {
     var g = scrollStripGeom();
     stripGeom = g;
     var active = scrollT * (g.n - 1);
-    var center = stripHot >= 0 ? stripHot : active;
+    var center = stripHot >= 0 ? Math.round(stripHot) : Math.round(active);
+    var half = liftHalf(worldW, g.n);
     var rest = 7;
     var grow = 34;
     var i;
     var marks = [];
     for (i = 0; i < g.n; i++) {
-      var w = dockWeight(i - center);
+      var w = dockWeight(i - center, half);
       marks.push({
         y: g.y0 + (g.y1 - g.y0) * (i / (g.n - 1)),
         w: w,
@@ -1449,6 +1496,7 @@
       ctx.setLineDash([]);
       strokeLine(g.right - mark.len, mark.y, g.right, mark.y);
     }
+    drawTickDepth(g, worldW);
   }
 
   function pointerOnStrip(x, y) {
@@ -1507,7 +1555,7 @@
     ctx.restore();
 
     drawFrame(v, tb);
-    drawScrollStrip();
+    drawScrollStrip(worldW);
     drawFps();
   }
 
