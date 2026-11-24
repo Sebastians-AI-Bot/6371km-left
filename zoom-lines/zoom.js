@@ -73,9 +73,17 @@
 
   var logW = Math.log10(nearWidth());
   var lock = "near";
-  var frameTimes = [];
+  /* Presented frames, not a tight redraw loop. A bucket of about a tenth
+     of a second: frames in the bucket divided by the time those frames spanned. */
   var fpsLabel = "— fps";
-  var holdFps = false;
+  var fpsValue = 0;
+  var fpsFrames = 0;
+  var fpsElapsed = 0;
+  var fpsLast = 0;
+  var fpsPubs = 0;
+  var hatchZoom = 1;
+  var hatchAnchor = { x: 0, y: 0 };
+  var hatchBandPx = 0;
 
   function nearWidth() {
     return PATCH / 0.4;
@@ -403,25 +411,63 @@
   }
 
   var patternCache = {};
+  var patternZoomKey = "";
 
-  /* One tile per hatch, painted once and repeated. The destination is
-     scaled by dpr, and the tile is already dpr pixels per CSS pixel,
-     so the pattern transform cancels that second scale. */
+  /* Repeat step of each hatch, in CSS pixels at the near view (the legend). */
+  var STEP = {
+    roots: 28, clay: 8, sand: 11, gravel: 22, shale: 7, sandstone: 11,
+    limestone: 13, granite: 22, gneiss: 12, peridotite: 26, transition: 12,
+    mantle: 18, dlayer: 8, outer: 9, inner: 11, groundwater: 9, gas: 16,
+    oil: 8, brine: 9, magma: 7
+  };
+
+  /* World spacing grows with the view, so the same legend opens up as you
+     leave the patch. 1 at the surface, larger as the window widens. */
+  function zoomScale(v) {
+    var t = Math.log(v.worldW / nearWidth()) / Math.LN10;
+    if (!(t > 0)) return 1;
+    var raw = Math.pow(1.35, t);
+    if (raw > 3.5) raw = 3.5;
+    return Math.max(1, Math.round(raw * 8) / 8);
+  }
+
+  function bandScale(step) {
+    var scale = hatchZoom;
+    var band = hatchBandPx;
+    if (!step || !band || band >= 64) return scale;
+    var stepPx = step * scale;
+    if (stepPx >= band / 2.2) return scale;
+    var opened = (band / 2.2) / step;
+    var cap = (band * 0.9) / step;
+    if (opened > cap) opened = cap;
+    if (!(opened > scale)) return scale;
+    return Math.round(opened * 8) / 8;
+  }
+
+  /* One tile per hatch and scale, painted once and repeated. Geometry is
+     scaled; the stroke stays a hairline. The destination is scaled by dpr,
+     and the tile is already dpr pixels per CSS pixel, so the pattern
+     transform cancels that second scale. */
   function fillPattern(box, key, w, h, paint) {
     if (box.w < 1 || box.h < 1) return;
-    var id = key + "@" + dpr;
+    var scale = bandScale(STEP[key] || Math.min(w, h));
+    if (patternZoomKey !== String(hatchZoom)) {
+      patternCache = {};
+      patternZoomKey = String(hatchZoom);
+    }
+    var id = key + "@" + dpr + "@" + scale;
     var pat = patternCache[id];
     if (!pat) {
       var tile = document.createElement("canvas");
-      var pw = Math.max(1, Math.round(w * dpr));
-      var ph = Math.max(1, Math.round(h * dpr));
+      var pw = Math.max(1, Math.round(w * scale * dpr));
+      var ph = Math.max(1, Math.round(h * scale * dpr));
       tile.width = pw;
       tile.height = ph;
       var g = tile.getContext("2d");
-      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
       g.strokeStyle = HATCH;
       g.fillStyle = HATCH;
-      g.lineWidth = 0.75;
+      g.lineWidth = 0.75 / scale;
       g.lineCap = "round";
       g.lineJoin = "round";
       paint(g, w, h);
@@ -429,8 +475,11 @@
       pat.setTransform(new DOMMatrix().scale(1 / dpr, 1 / dpr));
       patternCache[id] = pat;
     }
+    ctx.save();
+    ctx.translate(hatchAnchor.x, hatchAnchor.y);
     ctx.fillStyle = pat;
-    ctx.fillRect(box.x, box.y, box.w, box.h);
+    ctx.fillRect(box.x - hatchAnchor.x, box.y - hatchAnchor.y, box.w, box.h);
+    ctx.restore();
   }
 
   function stamp(g, w, h, places, drawOne) {
@@ -723,6 +772,7 @@
     }
   };
 
+
   function paintRegion(v, d0, d1, patternName, x0, x1, paper) {
     var tall = visiblePx(v, d0, d1);
     if (tall < (x0 == null ? 18 : 14)) return false;
@@ -747,6 +797,7 @@
       ctx.fillRect(box.x - 8, box.y - 8, box.w + 16, box.h + 16);
     }
     hatchInk();
+    hatchBandPx = tall;
     var draw = PATTERNS[patternName];
     if (draw) draw(box);
     ctx.restore();
@@ -777,6 +828,9 @@
   }
 
   function drawMaterials(v, tb) {
+    var nextZoom = zoomScale(v);
+    if (nextZoom !== hatchZoom) hatchZoom = nextZoom;
+    hatchAnchor = worldToScreen(v, 0, 0);
     var labels = [];
     var from = 0;
     var i;
@@ -1275,18 +1329,6 @@
     return null;
   }
 
-  function noteFrame() {
-    if (holdFps) return;
-    var now = performance.now();
-    frameTimes.push(now);
-    var horizon = now - 500;
-    while (frameTimes.length && frameTimes[0] < horizon) frameTimes.shift();
-    if (frameTimes.length >= 2) {
-      var span = frameTimes[frameTimes.length - 1] - frameTimes[0];
-      if (span > 0) fpsLabel = Math.round((frameTimes.length - 1) * 1000 / span) + " fps";
-    }
-  }
-
   function drawFps() {
     setFont(14, 500);
     ctx.textAlign = "left";
@@ -1303,8 +1345,6 @@
   }
 
   function draw() {
-    var frameStart = performance.now();
-    noteFrame();
     resize();
     var aspect = sheetBox().w / Math.max(1, sheetBox().h);
     var forced = widthForLock(aspect);
@@ -1333,17 +1373,12 @@
     ctx.restore();
 
     drawFrame(v, tb);
-    if (!holdFps && frameTimes.length < 2) {
-      var alone = performance.now() - frameStart;
-      if (alone > 0) fpsLabel = Math.round(1000 / alone) + " fps";
-    }
     drawFps();
   }
 
   function zoomBy(dy) {
     lock = null;
     logW += dy * 0.00115;
-    draw();
   }
 
   function applyPreset(name) {
@@ -1351,7 +1386,6 @@
     else if (name === "middle" || name === "crust" || name === "2") lock = "middle";
     else if (name === "globe" || name === "3") lock = "globe";
     else return false;
-    draw();
     return true;
   }
 
@@ -1363,13 +1397,35 @@
     if (w && isFinite(Number(w)) && Number(w) > 0) {
       lock = null;
       logW = Math.log10(Number(w));
-      draw();
       return;
     }
-    if (!applyPreset(zoom || hash)) draw();
+    applyPreset(zoom || hash);
   }
 
-  window.addEventListener("resize", draw);
+  function onFrame(now) {
+    if (fpsLast) {
+      var dt = now - fpsLast;
+      if (dt > 0 && dt < 250) {
+        fpsElapsed += dt;
+        fpsFrames += 1;
+      } else {
+        fpsElapsed = 0;
+        fpsFrames = 0;
+      }
+      if (fpsElapsed >= 100 && fpsFrames > 0) {
+        fpsValue = fpsFrames * 1000 / fpsElapsed;
+        fpsLabel = Math.round(fpsValue) + " fps";
+        fpsPubs += 1;
+        fpsElapsed = 0;
+        fpsFrames = 0;
+      }
+    }
+    fpsLast = now;
+    draw();
+    requestAnimationFrame(onFrame);
+  }
+
+  window.addEventListener("resize", function () { resize(); });
   window.addEventListener("wheel", function (event) {
     event.preventDefault();
     var dy = event.deltaY;
@@ -1390,8 +1446,8 @@
 
   window.ZOOM = {
     setWorldWidth: function (meters) {
+      lock = null;
       logW = Math.log10(meters);
-      draw();
     },
     preset: function (name) {
       applyPreset(name);
@@ -1399,18 +1455,8 @@
     fps: function () {
       return fpsLabel;
     },
-    sample: function (n) {
-      n = n || 24;
-      frameTimes = [];
-      var t0 = performance.now();
-      for (var i = 0; i < n; i++) draw();
-      var ms = (performance.now() - t0) / n;
-      var rate = 1000 / ms;
-      fpsLabel = Math.round(rate) + " fps";
-      holdFps = true;
-      draw();
-      holdFps = false;
-      return { ms: ms, fps: rate, label: fpsLabel };
+    frameStats: function () {
+      return { label: fpsLabel, fps: fpsValue, frames: fpsFrames, ms: fpsElapsed, pubs: fpsPubs };
     },
     state: function () {
       var aspect = sheetBox().w / Math.max(1, sheetBox().h);
@@ -1431,4 +1477,5 @@
   resize();
   readLocation();
   window.addEventListener("load", readLocation);
+  requestAnimationFrame(onFrame);
 })();
