@@ -83,7 +83,6 @@
   var fpsPubs = 0;
   var hatchZoom = 1;
   var hatchAnchor = { x: 0, y: 0 };
-  var hatchBandPx = 0;
 
   function nearWidth() {
     return PATCH / 0.4;
@@ -413,35 +412,41 @@
   var patternCache = {};
   var patternZoomKey = "";
 
-  /* Repeat step of each hatch, in CSS pixels at the near view (the legend). */
+  /* Repeat step, and the smallest drawn mark, in CSS pixels at the surface. */
   var STEP = {
     roots: 28, clay: 8, sand: 11, gravel: 22, shale: 7, sandstone: 11,
     limestone: 13, granite: 22, gneiss: 12, peridotite: 26, transition: 12,
     mantle: 18, dlayer: 8, outer: 9, inner: 11, groundwater: 9, gas: 16,
     oil: 8, brine: 9, magma: 7
   };
+  var MARK = {
+    roots: 3.2, clay: 8, sand: 1.4, gravel: 3.4, shale: 7, sandstone: 11,
+    limestone: 13, granite: 6.4, gneiss: 4.8, peridotite: 8.4, transition: 12,
+    mantle: 6.4, dlayer: 5.2, outer: 6.8, inner: 14, groundwater: 2.1, gas: 4.6,
+    oil: 2.3, brine: 3.4, magma: 6.4
+  };
+  var HAIR = 0.75;
+  /* Pitch closer than this, with a hairline stroke, reads as a grey fill. */
+  var MIN_PITCH = 5;
 
-  /* World spacing grows with the view, so the same legend opens up as you
-     leave the patch. 1 at the surface, larger as the window widens. */
+  /* Same tile as the legend. Screen size tracks the ground: nearWidth/worldW.
+     1 at the surface, smaller as the window widens. */
   function zoomScale(v) {
-    var t = Math.log(v.worldW / nearWidth()) / Math.LN10;
-    if (!(t > 0)) return 1;
-    var raw = Math.pow(1.35, t);
-    if (raw > 3.5) raw = 3.5;
-    return Math.max(1, Math.round(raw * 8) / 8);
+    var fit = nearWidth() / Math.max(v.worldW, nearWidth());
+    if (fit > 1) fit = 1;
+    return Math.round(fit * 32) / 32;
   }
 
-  function bandScale(step) {
+  /* Hold a pattern when its marks would be finer than a hairline, or when
+     the repeat would close up into a solid fill. Same drawing, just not smaller. */
+  function patternScale(key) {
+    var step = STEP[key] || 12;
+    var mark = MARK[key] || step;
     var scale = hatchZoom;
-    var band = hatchBandPx;
-    if (!step || !band || band >= 64) return scale;
-    var stepPx = step * scale;
-    if (stepPx >= band / 2.2) return scale;
-    var opened = (band / 2.2) / step;
-    var cap = (band * 0.9) / step;
-    if (opened > cap) opened = cap;
-    if (!(opened > scale)) return scale;
-    return Math.round(opened * 8) / 8;
+    var floor = Math.max(HAIR / mark, MIN_PITCH / step);
+    if (scale < floor) scale = floor;
+    if (scale > 1) scale = 1;
+    return Math.round(scale * 32) / 32;
   }
 
   /* One tile per hatch and scale, painted once and repeated. Geometry is
@@ -450,7 +455,7 @@
      transform cancels that second scale. */
   function fillPattern(box, key, w, h, paint) {
     if (box.w < 1 || box.h < 1) return;
-    var scale = bandScale(STEP[key] || Math.min(w, h));
+    var scale = patternScale(key);
     if (patternZoomKey !== String(hatchZoom)) {
       patternCache = {};
       patternZoomKey = String(hatchZoom);
@@ -797,7 +802,6 @@
       ctx.fillRect(box.x - 8, box.y - 8, box.w + 16, box.h + 16);
     }
     hatchInk();
-    hatchBandPx = tall;
     var draw = PATTERNS[patternName];
     if (draw) draw(box);
     ctx.restore();
