@@ -33,6 +33,33 @@
     { name: "inner core", top: 5150, bottom: 6371, hatch: [{ ang: 45, gap: 0.02 }, { ang: -45, gap: 0.02 }] }
   ];
 
+  /* Boundaries labelled on the axis once the sheet is zoomed in. */
+  var MAIN_MARKS = [
+    { km: 35, name: "Moho" },
+    { km: 660, name: "upper / lower mantle" },
+    { km: 2890, name: "core–mantle boundary" },
+    { km: 5150, name: "inner core boundary" },
+    { km: 6371, name: "centre" }
+  ];
+
+  /* Finer boundaries that fade in with zoom (PREM and the 410/520/660 seismic set). */
+  var DETAIL = [
+    { km: 410, name: "olivine → wadsleyite", zoom: 3 },
+    { km: 520, name: "wadsleyite → ringwoodite", zoom: 4 },
+    { km: 2741, name: "top of D″", zoom: 4 },
+    { km: 220, name: "base of low-velocity zone", zoom: 6 },
+    { km: 80, name: "base of lithosphere (PREM lid)", zoom: 8 },
+    { km: 15, name: "upper / lower crust", zoom: 24 }
+  ];
+
+  /* Real depths along the shaft, for scale; they need the deepest zoom. */
+  var SHAFT_MARKS = [
+    { km: 3.74, label: "3.7 km  Mponeng, deepest mine", zoom: 300 },
+    { km: 9.101, label: "9.1 km  KTB borehole", zoom: 150 },
+    { km: 12.262, label: "12.3 km  Kola SG-3, deepest borehole", zoom: 150 },
+    { km: 15, label: "15 km  real physics ends here", zoom: 40 }
+  ];
+
   /* Section rings by angle from the pole, in degrees. */
   var RINGS = [
     { a: 4, s: "grey" },
@@ -159,44 +186,69 @@
     else pen(FAINT, 0.6);
   }
 
-  /* Cut faces as 2D planes: a runs away from the axis, b up it (or forward on the floor). */
+  /* Cut faces as 2D planes: a runs away from the axis, b up it (or forward on the floor).
+     cons are half-planes ca * a + cb * b >= 0 that bound the face. */
   function sideFace(lon) {
     var s = Math.sin(rad(lon));
     var c = Math.cos(rad(lon));
     return {
       at: function (a, b) { return [a * s, b, a * c]; },
-      inside: function (a, b) { return a >= 0 && b >= 0; }
+      cons: [[1, 0], [0, 1]]
     };
   }
 
   var FLOOR = {
     at: function (a, b) { return [a, 0, b]; },
-    inside: function (a, b) { return b >= 0 && Math.abs(Math.atan2(a, b)) <= rad(WEDGE); }
+    cons: [[-1, 1], [1, 1]]
   };
 
   var FACES = [sideFace(-WEDGE), sideFace(WEDGE), FLOOR];
 
+  /* Hatch lines are clipped exactly, so they stay clean at deep zoom. */
   function drawHatch(face, rIn, rOut, ang, gap) {
     var dx = Math.cos(rad(ang));
     var dy = Math.sin(rad(ang));
-    var step = 0.006;
-    var n = Math.ceil(2 * rOut / step);
+    ctx.beginPath();
     for (var c = -rOut + gap / 2; c < rOut; c += gap) {
-      var open = false;
-      ctx.beginPath();
-      for (var i = 0; i <= n; i++) {
-        var s = -rOut + i * step;
-        var a = -c * dy + s * dx;
-        var b = c * dx + s * dy;
-        var r = Math.hypot(a, b);
-        var q = r >= rIn && r <= rOut && face.inside(a, b) ? project(face.at(a, b)) : null;
-        if (!q) { open = false; continue; }
-        if (open) ctx.lineTo(sx(q.x), sy(q.y));
-        else ctx.moveTo(sx(q.x), sy(q.y));
-        open = true;
+      var lo = -Infinity;
+      var hi = Infinity;
+      face.cons.forEach(function (k) {
+        var p = c * (k[1] * dx - k[0] * dy);
+        var q = k[0] * dx + k[1] * dy;
+        if (Math.abs(q) < 1e-12) { if (p < 0) hi = -Infinity; }
+        else if (q > 0) lo = Math.max(lo, -p / q);
+        else hi = Math.min(hi, -p / q);
+      });
+      var so = Math.sqrt(rOut * rOut - c * c);
+      var spans = [[-so, so]];
+      if (Math.abs(c) < rIn) {
+        var si = Math.sqrt(rIn * rIn - c * c);
+        spans = [[-so, -si], [si, so]];
       }
-      ctx.stroke();
+      spans.forEach(function (sp) {
+        var s0 = Math.max(sp[0], lo);
+        var s1 = Math.min(sp[1], hi);
+        if (s1 <= s0) return;
+        var p0 = project(face.at(-c * dy + s0 * dx, c * dx + s0 * dy));
+        var p1 = project(face.at(-c * dy + s1 * dx, c * dx + s1 * dy));
+        ctx.moveTo(sx(p0.x), sy(p0.y));
+        ctx.lineTo(sx(p1.x), sy(p1.y));
+      });
     }
+    ctx.stroke();
+  }
+
+  function boundary(r) {
+    [-WEDGE, WEDGE].forEach(function (lon) {
+      var f = sideFace(lon);
+      curve(function (t) { var u = t * Math.PI / 2; return f.at(r * Math.sin(u), r * Math.cos(u)); }, 1440);
+    });
+    curve(function (t) { var l = rad(-WEDGE + t * 2 * WEDGE); return [r * Math.sin(l), 0, r * Math.cos(l)]; }, 1440);
+  }
+
+  /* 0 below half the threshold zoom, 1 from the threshold up. */
+  function reveal(k0) {
+    return Math.min(1, Math.max(0, Math.log2(view.k / k0) + 1));
   }
 
   function drawCut() {
@@ -210,37 +262,109 @@
       });
     });
 
+    DETAIL.forEach(function (d) {
+      var a = reveal(d.zoom);
+      if (!a) return;
+      ctx.globalAlpha = a;
+      pen(GREY, 0.7, [6, 3]);
+      boundary(radiusAt(d.km));
+      ctx.globalAlpha = 1;
+    });
+
+    pen(INK, 0.85);
     LAYERS.forEach(function (layer) {
-      if (layer.top === 0) return;
-      var r = radiusAt(layer.top);
-      pen(INK, 0.85);
-      [-WEDGE, WEDGE].forEach(function (lon) {
-        var f = sideFace(lon);
-        curve(function (t) { var u = t * Math.PI / 2; return f.at(r * Math.sin(u), r * Math.cos(u)); }, 120);
-      });
-      curve(function (t) { var l = rad(-WEDGE + t * 2 * WEDGE); return [r * Math.sin(l), 0, r * Math.cos(l)]; }, 120);
+      if (layer.top > 0) boundary(radiusAt(layer.top));
     });
 
     pen(INK, 1.2);
     [-WEDGE, WEDGE].forEach(function (lon) {
       var f = sideFace(lon);
-      curve(function (t) { var u = t * Math.PI / 2; return f.at(Math.sin(u), Math.cos(u)); }, 160);
+      curve(function (t) { var u = t * Math.PI / 2; return f.at(Math.sin(u), Math.cos(u)); }, 1440);
       curve(function (t) { return f.at(t, 0); }, 1);
     });
     curve(function (t) { return [0, t, 0]; }, 1);
   }
 
+  /* The shaft runs down the axis from the pole to the centre. A real shaft of a few
+     metres would vanish at any zoom here, so it keeps a fixed width on screen. */
+  function drawShaft() {
+    var top = project([0, 1, 0]);
+    var bottom = project([0, 0, 0]);
+    var x = sx(top.x);
+    var y0 = sy(top.y);
+    var y1 = sy(bottom.y);
+    var w = 2.4 * dpr();
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(x - w, y0, 2 * w, y1 - y0);
+    pen(INK, 0.9);
+    ctx.beginPath();
+    ctx.moveTo(x - w, y0);
+    ctx.lineTo(x - w, y1);
+    ctx.lineTo(x + w, y1);
+    ctx.lineTo(x + w, y0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(x, y0, w * 1.9, w * 0.7, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    pen(FAINT, 0.6, [12, 4, 2, 4]);
+    line(W / 2, H * 0.03, W / 2, top.y);
+  }
+
+  function depthY(km) { return sy(project([0, radiusAt(km), 0]).y); }
+
+  /* Text in device pixels beside the axis, on a paper ground so hatching stays behind it. */
+  function axisLabel(y, text, side, color) {
+    var x = sx(W / 2) + side * 14 * dpr();
+    var m = ctx.measureText(text);
+    var h = 13 * fit.s;
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(side > 0 ? x - 3 : x - m.width - 3, y - h / 2, m.width + 6, h);
+    ctx.fillStyle = color;
+    ctx.textAlign = side > 0 ? "left" : "right";
+    ctx.fillText(text, x, y);
+  }
+
+  function axisTick(y, len) {
+    var x = sx(W / 2);
+    ctx.beginPath();
+    ctx.moveTo(x - len * dpr(), y);
+    ctx.lineTo(x + len * dpr(), y);
+    ctx.stroke();
+  }
+
   function drawAxisTicks() {
     pen(INK, 0.8);
-    LAYERS.forEach(function (layer) {
-      var q = project([0, radiusAt(layer.top), 0]);
-      line(q.x - 6, q.y, q.x + 6, q.y);
+    LAYERS.forEach(function (layer) { axisTick(depthY(layer.top), 7); });
+    axisTick(depthY(EARTH_KM), 7);
+
+    ctx.font = "italic " + (11 * fit.s) + "px Georgia, serif";
+    ctx.textBaseline = "middle";
+
+    var a = reveal(3);
+    if (a) {
+      ctx.globalAlpha = a;
+      MAIN_MARKS.forEach(function (m) { axisLabel(depthY(m.km), fmt(m.km) + " km  " + m.name, -1, INK); });
+      DETAIL.forEach(function (d) {
+        var b = Math.min(a, reveal(d.zoom));
+        if (!b) return;
+        ctx.globalAlpha = b;
+        pen(GREY, 0.7);
+        axisTick(depthY(d.km), 5);
+        axisLabel(depthY(d.km), fmt(d.km) + " km  " + d.name, 1, GREY);
+      });
+    }
+
+    SHAFT_MARKS.forEach(function (m) {
+      var b = reveal(m.zoom);
+      if (!b) return;
+      ctx.globalAlpha = b;
+      pen(GREY, 0.7);
+      axisTick(depthY(m.km), 9);
+      axisLabel(depthY(m.km), m.label, -1, GREY);
     });
-    var c = project([0, 0, 0]);
-    line(c.x - 6, c.y, c.x + 6, c.y);
-    var pole = project([0, 1, 0]);
-    pen(FAINT, 0.6, [12, 4, 2, 4]);
-    line(W / 2, H * 0.03, W / 2, pole.y);
+
+    ctx.globalAlpha = 1;
+    ctx.textBaseline = "alphabetic";
   }
 
   /* Leaders from the right cut face out to a column of labels. */
@@ -405,6 +529,7 @@
     drawRings();
     drawLimb();
     drawCut();
+    drawShaft();
     drawAxisTicks();
     drawPosts();
     drawCallouts();
@@ -421,13 +546,13 @@
   }
 
   /* Zoom about the cursor; at the fitted scale the sheet sits centered.
-     The crust is 35 km thick at true scale, so it needs deep zoom. */
+     Everything is true scale, so the crust and the shaft marks need deep zoom. */
   canvas.addEventListener("wheel", function (e) {
     e.preventDefault();
     var r = dpr();
     var mx = ((e.clientX * r - fit.ox) / fit.s - view.x) / view.k;
     var my = ((e.clientY * r - fit.oy) / fit.s - view.y) / view.k;
-    var k = Math.min(60, Math.max(1, view.k * Math.exp(-e.deltaY * 0.0015)));
+    var k = Math.min(400, Math.max(1, view.k * Math.exp(-e.deltaY * 0.0015)));
     view.x += mx * (view.k - k);
     view.y += my * (view.k - k);
     view.k = k;
