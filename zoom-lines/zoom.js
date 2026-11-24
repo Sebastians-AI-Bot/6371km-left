@@ -1605,6 +1605,7 @@
 
   var debugOpen = true;
   var debugHit = null;
+  var machinesHit = null;
 
   function drawDebug(v) {
     var rows = debugOpen ? debugRows(v) : [];
@@ -1618,14 +1619,18 @@
       var pair = ctx.measureText(rows[i][0]).width + ctx.measureText(rows[i][1]).width + 18;
       if (pair > maxW) maxW = pair;
     }
+    var controlW = ctx.measureText("machines").width + ctx.measureText("open").width + 18;
+    if (controlW > maxW) maxW = controlW;
     var pad = 8;
     var headH = 22;
     var rowH = 16;
+    var controlH = 22;
     var w = Math.ceil(maxW + pad * 2);
-    var h = debugOpen ? headH + 4 + rows.length * rowH + 4 : headH;
+    var h = debugOpen ? headH + 4 + rows.length * rowH + controlH : headH;
     var x = 10;
     var y = 42;
     debugHit = { x: x, y: y, w: w, h: headH };
+    machinesHit = debugOpen ? { x: x, y: y + h - controlH, w: w, h: controlH } : null;
 
     ctx.fillStyle = PAPER;
     ctx.strokeStyle = MID;
@@ -1660,6 +1665,18 @@
       ctx.fillText(rows[i][1], x + w - pad, yy);
       yy += rowH;
     }
+    ctx.strokeStyle = MID;
+    ctx.beginPath();
+    ctx.moveTo(x, machinesHit.y);
+    ctx.lineTo(x + w, machinesHit.y);
+    ctx.stroke();
+    setFont(12, 500);
+    ctx.fillStyle = INK;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("machines", x + pad, machinesHit.y + controlH / 2);
+    ctx.textAlign = "right";
+    ctx.fillText("open", x + w - pad, machinesHit.y + controlH / 2);
     ctx.restore();
   }
 
@@ -1935,6 +1952,457 @@
     wheelLift = true;
   }
 
+  /* A timbered shaft in the patch, from the surface into the gravel.
+     Dropped once it would be a speck, same idea as the layer dimensions. */
+  var SHAFT = { x0: 0.66, x1: 1.36, y0: 0, y1: 6.2 };
+  var CHAMBER = { x0: 1.36, x1: 1.74, y0: 1.76, y1: 2.42 };
+
+  function shaftReadable(v) {
+    if (globeInView(v.worldW)) return false;
+    return (SHAFT.x1 - SHAFT.x0) * v.px >= 16;
+  }
+
+  function wline(v, x0, y0, x1, y1) {
+    var a = worldToScreen(v, x0, y0);
+    var b = worldToScreen(v, x1, y1);
+    strokeLine(a.x, a.y, b.x, b.y);
+  }
+
+  function drawWorks(v) {
+    if (!shaftReadable(v)) return;
+    ctx.save();
+    ctx.fillStyle = PAPER;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.15;
+    ctx.lineJoin = "miter";
+    ctx.lineCap = "butt";
+    ctx.setLineDash([]);
+
+    var s0 = worldToScreen(v, SHAFT.x0, SHAFT.y0);
+    var s1 = worldToScreen(v, SHAFT.x1, SHAFT.y1);
+    var c0 = worldToScreen(v, CHAMBER.x0, CHAMBER.y0);
+    var c1 = worldToScreen(v, CHAMBER.x1, CHAMBER.y1);
+    ctx.beginPath();
+    ctx.moveTo(s0.x, s0.y);
+    ctx.lineTo(s0.x, s1.y);
+    ctx.lineTo(s1.x, s1.y);
+    ctx.lineTo(s1.x, c1.y);
+    ctx.lineTo(c1.x, c1.y);
+    ctx.lineTo(c1.x, c0.y);
+    ctx.lineTo(s1.x, c0.y);
+    ctx.lineTo(s1.x, s0.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    var inset = 0.06;
+    ctx.lineWidth = 0.9;
+    wline(v, SHAFT.x0 + inset, 0.12, SHAFT.x0 + inset, SHAFT.y1 - 0.1);
+    wline(v, SHAFT.x1 - inset, 0.12, SHAFT.x1 - inset, SHAFT.y1 - 0.1);
+    var y;
+    for (y = 0.45; y < SHAFT.y1 - 0.25; y += 0.55) {
+      var xR = (y > CHAMBER.y0 && y < CHAMBER.y1) ? SHAFT.x1 - inset : SHAFT.x1;
+      wline(v, SHAFT.x0, y, xR, y);
+    }
+    wline(v, CHAMBER.x0, CHAMBER.y0 + 0.1, CHAMBER.x1 - 0.06, CHAMBER.y0 + 0.1);
+    wline(v, CHAMBER.x0, CHAMBER.y1 - 0.08, CHAMBER.x1 - 0.06, CHAMBER.y1 - 0.08);
+
+    ctx.strokeStyle = MID;
+    ctx.lineWidth = 0.8;
+    var wy = 2.02;
+    var wx = SHAFT.x0 + 0.1;
+    ctx.beginPath();
+    var a = worldToScreen(v, wx, wy);
+    ctx.moveTo(a.x, a.y);
+    while (wx < CHAMBER.x1 - 0.08) {
+      wx += 0.08;
+      a = worldToScreen(v, wx, wy + ((Math.round(wx * 12) % 2) ? 0.035 : -0.035));
+      ctx.lineTo(a.x, a.y);
+    }
+    ctx.stroke();
+
+    drawCage(v);
+    drawPump(v);
+    drawHandTools(v);
+    ctx.restore();
+  }
+
+  function drawCage(v) {
+    var x0 = SHAFT.x0 + 0.1;
+    var x1 = SHAFT.x1 - 0.1;
+    var y0 = 0.48;
+    var y1 = 1.22;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1;
+    wline(v, x0, y0, x1, y0);
+    wline(v, x0, y1, x1, y1);
+    wline(v, x0, y0, x0, y1);
+    wline(v, x1, y0, x1, y1);
+    var i;
+    for (i = 1; i <= 3; i++) wline(v, x0 + (x1 - x0) * i / 4, y0, x0 + (x1 - x0) * i / 4, y1);
+    var mid = (x0 + x1) / 2;
+    wline(v, mid, 0.06, mid, y0);
+  }
+
+  function drawPump(v) {
+    var x = CHAMBER.x0 + 0.06;
+    var y = CHAMBER.y1 - 0.12;
+    var w = 0.22;
+    var h = 0.16;
+    var a = worldToScreen(v, x, y - h);
+    var b = worldToScreen(v, x + w, y);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    var c = worldToScreen(v, x + w * 0.72, y - h * 0.5);
+    var r = Math.abs(b.x - a.x) * 0.22;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, Math.max(1.5, r), 0, Math.PI * 2);
+    ctx.stroke();
+    wline(v, x, y - h * 0.55, x - 0.1, y - h * 0.55);
+  }
+
+  function drawHandTools(v) {
+    var shovel = worldToScreen(v, -2.62, 0);
+    var pick = worldToScreen(v, -2.18, 0);
+    var s = v.px;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.1;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    strokeLine(shovel.x, shovel.y - 0.78 * s, shovel.x, shovel.y - 0.22 * s);
+    ctx.beginPath();
+    ctx.moveTo(shovel.x - 0.11 * s, shovel.y - 0.22 * s);
+    ctx.lineTo(shovel.x - 0.13 * s, shovel.y - 0.04 * s);
+    ctx.lineTo(shovel.x + 0.13 * s, shovel.y - 0.04 * s);
+    ctx.lineTo(shovel.x + 0.11 * s, shovel.y - 0.22 * s);
+    ctx.stroke();
+    strokeLine(shovel.x - 0.06 * s, shovel.y - 0.78 * s, shovel.x + 0.06 * s, shovel.y - 0.78 * s);
+    strokeLine(pick.x - 0.22 * s, pick.y - 0.46 * s, pick.x, pick.y - 0.62 * s);
+    strokeLine(pick.x, pick.y - 0.62 * s, pick.x + 0.24 * s, pick.y - 0.44 * s);
+    strokeLine(pick.x, pick.y - 0.58 * s, pick.x, pick.y - 0.04 * s);
+  }
+
+  var modalOpen = false;
+  var modalBox = null;
+  var modalClose = null;
+
+  function hitRect(r, x, y) {
+    return !!r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+  }
+
+  function drawMachinesModal() {
+    var box = { x: 0, y: 16, w: Math.max(280, cssW - 52), h: Math.max(220, cssH - 32) };
+    var close = { x: box.x + box.w - 28, y: box.y + 8, w: 18, h: 18 };
+    modalBox = box;
+    modalClose = close;
+    ctx.save();
+    ctx.fillStyle = PAPER;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.1;
+    ctx.setLineDash([]);
+    ctx.fillRect(box.x, box.y, box.w, box.h);
+    ctx.strokeRect(box.x + 0.5, box.y + 0.5, box.w - 1, box.h - 1);
+    setFont(16, 500);
+    ctx.fillStyle = INK;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("machines", box.x + 16, box.y + 18);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.15;
+    strokeLine(close.x + 4, close.y + 4, close.x + close.w - 4, close.y + close.h - 4);
+    strokeLine(close.x + close.w - 4, close.y + 4, close.x + 4, close.y + close.h - 4);
+    ctx.strokeStyle = MID;
+    ctx.lineWidth = 0.8;
+    strokeLine(box.x, box.y + 36, box.x + box.w, box.y + 36);
+
+    var inner = { x: box.x + 16, y: box.y + 44, w: box.w - 32, h: box.h - 58 };
+    var topH = Math.round(inner.h * 0.56);
+    var cols = 4;
+    var rows = 2;
+    var cw = inner.w / cols;
+    var ch = topH / rows;
+    var icons = [
+      ["hand shovel", "0.9 m", iconShovel],
+      ["pickaxe", "0.7 m", iconPick],
+      ["elevator cage", "0.9 m", iconCage],
+      ["water pump", "0.5 m", iconPump],
+      ["rotary drill", "8 m", iconDrill],
+      ["bucket conveyor", "6 m", iconConveyor],
+      ["boring head", "4 m", iconHead]
+    ];
+    var i;
+    for (i = 0; i < icons.length; i++) {
+      var col = i % cols;
+      var row = Math.floor(i / cols);
+      var cell = { x: inner.x + col * cw, y: inner.y + row * ch, w: cw, h: ch };
+      drawMachineCell(cell, icons[i][0], icons[i][1], icons[i][2]);
+    }
+    ctx.strokeStyle = MID;
+    ctx.lineWidth = 0.7;
+    strokeLine(inner.x, inner.y + topH, inner.x + inner.w, inner.y + topH);
+    drawExploded(inner.x, inner.y + topH + 8, inner.w, inner.h - topH - 8);
+    ctx.restore();
+  }
+
+  function drawMachineCell(cell, name, dim, drawIcon) {
+    var pad = 8;
+    var area = {
+      x: cell.x + pad,
+      y: cell.y + 4,
+      w: cell.w - pad * 2,
+      h: cell.h - 22
+    };
+    drawIcon(area, dim);
+    setFont(11);
+    ctx.fillStyle = INK;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(name, cell.x + cell.w / 2, cell.y + cell.h - 2);
+  }
+
+  function dimTick(x0, y0, x1, y1, label) {
+    ctx.save();
+    ctx.strokeStyle = MID;
+    ctx.fillStyle = INK;
+    ctx.lineWidth = 0.7;
+    ctx.setLineDash([]);
+    setFont(10);
+    var horiz = Math.abs(x1 - x0) >= Math.abs(y1 - y0);
+    var tw = ctx.measureText(label).width;
+    if (horiz) {
+      var y = y0;
+      var mid = (x0 + x1) / 2;
+      strokeLine(x0, y, x1, y);
+      strokeLine(x0, y - 3, x0, y + 3);
+      strokeLine(x1, y - 3, x1, y + 3);
+      ctx.fillStyle = PAPER;
+      ctx.fillRect(mid - tw / 2 - 2, y - 12, tw + 4, 11);
+      ctx.fillStyle = INK;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(label, mid, y - 2);
+    } else {
+      var x = x0;
+      var my = (y0 + y1) / 2;
+      strokeLine(x, y0, x, y1);
+      strokeLine(x - 3, y0, x + 3, y0);
+      strokeLine(x - 3, y1, x + 3, y1);
+      ctx.translate(x, my);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillStyle = PAPER;
+      ctx.fillRect(-tw / 2 - 2, -6, tw + 4, 12);
+      ctx.fillStyle = INK;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, 0, 0);
+    }
+    ctx.restore();
+  }
+
+  function iconShovel(a) {
+    var x = a.x + a.w * 0.5;
+    var y0 = a.y + 6;
+    var y1 = a.y + a.h - 18;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.1;
+    ctx.lineCap = "round";
+    strokeLine(x, y0 + 8, x, y1 - 16);
+    strokeLine(x - 7, y0 + 8, x + 7, y0 + 8);
+    ctx.beginPath();
+    ctx.moveTo(x - 12, y1 - 16);
+    ctx.lineTo(x - 14, y1);
+    ctx.lineTo(x + 14, y1);
+    ctx.lineTo(x + 12, y1 - 16);
+    ctx.stroke();
+    dimTick(x + 18, y0, x + 18, y1, "0.9 m");
+  }
+
+  function iconPick(a) {
+    var x = a.x + a.w * 0.48;
+    var y0 = a.y + 10;
+    var y1 = a.y + a.h - 16;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.1;
+    ctx.lineCap = "round";
+    strokeLine(x - 22, y0 + 6, x + 26, y0 + 18);
+    strokeLine(x + 2, y0 + 12, x + 6, y1);
+    dimTick(x + 22, y0, x + 22, y1, "0.7 m");
+  }
+
+  function iconCage(a) {
+    var x = a.x + a.w * 0.28;
+    var y0 = a.y + 4;
+    var w = Math.min(a.w * 0.46, 70);
+    var h = a.h - 22;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1;
+    strokeLine(x, y0 + h, x, y0 + 16);
+    strokeLine(x + w, y0 + h, x + w, y0 + 16);
+    strokeLine(x, y0 + 16, x + w / 2, y0);
+    strokeLine(x + w, y0 + 16, x + w / 2, y0);
+    var cy = y0 + h * 0.42;
+    var ch = h * 0.4;
+    ctx.strokeRect(x + 8, cy, w - 16, ch);
+    var i;
+    for (i = 1; i <= 3; i++) {
+      var bx = x + 8 + (w - 16) * i / 4;
+      strokeLine(bx, cy, bx, cy + ch);
+    }
+    strokeLine(x + w / 2, y0 + 2, x + w / 2, cy);
+    dimTick(x + w + 10, cy, x + w + 10, cy + ch, "0.9 m");
+  }
+
+  function iconPump(a) {
+    var x = a.x + a.w * 0.22;
+    var y = a.y + a.h * 0.45;
+    var w = Math.min(64, a.w * 0.4);
+    var h = Math.min(28, a.h * 0.28);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.1;
+    ctx.strokeRect(x, y, w, h);
+    ctx.beginPath();
+    ctx.arc(x + w * 0.72, y + h / 2, h * 0.32, 0, Math.PI * 2);
+    ctx.stroke();
+    strokeLine(x, y + h * 0.4, x - 16, y + h * 0.4);
+    strokeLine(x - 4, y + h, x + w + 6, y + h);
+    dimTick(x, y + h + 14, x + w, y + h + 14, "0.5 m");
+  }
+
+  function iconDrill(a) {
+    var x = a.x + a.w * 0.55;
+    var y0 = a.y + 2;
+    var y1 = a.y + a.h - 16;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1;
+    strokeLine(x, y0, x, y1);
+    strokeLine(x - 5, y0, x - 5, y1 - 18);
+    ctx.strokeRect(x - 16, y0 + 8, 22, 18);
+    ctx.beginPath();
+    ctx.arc(x - 5, y0 + 28, 5, 0, Math.PI * 2);
+    ctx.stroke();
+    var i;
+    for (i = 0; i < 5; i++) {
+      var yy = y1 - 16 - i * 4;
+      strokeLine(x - 7, yy, x + 3, yy - 3);
+    }
+    dimTick(x + 14, y0, x + 14, y1, "8 m");
+  }
+
+  function iconConveyor(a) {
+    var x0 = a.x + 8;
+    var x1 = a.x + a.w - 16;
+    var y0 = a.y + 16;
+    var y1 = a.y + a.h - 28;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1;
+    strokeLine(x0, y1, x1, y0);
+    strokeLine(x0, y1 + 5, x1, y0 + 5);
+    ctx.beginPath();
+    ctx.arc(x1, y0 + 2, 5, 0, Math.PI * 2);
+    ctx.stroke();
+    strokeLine(x0 + (x1 - x0) * 0.25, y1, x0 + (x1 - x0) * 0.25, y1 + 16);
+    var i;
+    for (i = 0; i < 3; i++) {
+      var t = 0.2 + i * 0.22;
+      var bx = x0 + (x1 - x0) * t;
+      var by = y1 + (y0 - y1) * t + 5;
+      ctx.strokeRect(bx - 5, by, 10, 8);
+    }
+    ctx.strokeRect(x1 - 18, y0 + 8, 20, 12);
+    dimTick(x0, y1 + 28, x1, y1 + 28, "6 m");
+  }
+
+  function iconHead(a) {
+    var cx = a.x + a.w * 0.42;
+    var cy = a.y + a.h * 0.42;
+    var r = Math.min(a.w, a.h) * 0.28;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.28, 0, Math.PI * 2);
+    ctx.stroke();
+    var i;
+    for (i = 0; i < 8; i++) {
+      var ang = i * Math.PI / 4;
+      strokeLine(cx + Math.cos(ang) * r * 0.35, cy + Math.sin(ang) * r * 0.35, cx + Math.cos(ang) * r, cy + Math.sin(ang) * r);
+    }
+    dimTick(cx - r, cy + r + 16, cx + r, cy + r + 16, "4 m");
+  }
+
+  function drawExploded(x, y, w, h) {
+    setFont(12, 500);
+    ctx.fillStyle = INK;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText("drill, exploded", x, y);
+    var n = 5;
+    var slot = w / n;
+    var labelY = y + 28;
+    var mid = y + 36 + Math.min(36, h * 0.22);
+    var names = ["1 motor", "2 gearbox", "3 rod", "4 head", "6 reel"];
+    var i;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.05;
+    ctx.lineJoin = "miter";
+    setFont(11);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    for (i = 0; i < n; i++) {
+      var cx = x + slot * (i + 0.5);
+      ctx.fillStyle = INK;
+      ctx.fillText(names[i], cx, labelY);
+      if (i === 0) {
+        ctx.strokeRect(cx - 16, mid - 12, 32, 24);
+        ctx.beginPath();
+        ctx.arc(cx, mid, 6, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (i === 1) {
+        ctx.strokeRect(cx - 16, mid - 12, 32, 24);
+        ctx.beginPath();
+        ctx.arc(cx - 6, mid, 5, 0, Math.PI * 2);
+        ctx.arc(cx + 6, mid, 5, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (i === 2) {
+        var rw = Math.min(slot - 28, 110);
+        ctx.strokeRect(cx - rw / 2, mid - 3, rw, 6);
+        var k;
+        for (k = 0; k < 7; k++) {
+          var tx = cx - rw / 2 + 8 + k * (rw - 16) / 6;
+          strokeLine(tx, mid - 3, tx, mid + 3);
+        }
+        dimTick(cx - rw / 2, mid + 16, cx + rw / 2, mid + 16, "3 m");
+      } else if (i === 3) {
+        ctx.beginPath();
+        ctx.moveTo(cx - 18, mid);
+        ctx.lineTo(cx + 10, mid - 14);
+        ctx.lineTo(cx + 10, mid + 14);
+        ctx.closePath();
+        ctx.stroke();
+        strokeLine(cx + 10, mid - 10, cx + 20, mid - 16);
+        strokeLine(cx + 10, mid - 2, cx + 22, mid - 2);
+        strokeLine(cx + 10, mid + 8, cx + 20, mid + 14);
+      } else {
+        ctx.beginPath();
+        ctx.arc(cx, mid, 14, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeRect(cx - 5, mid - 10, 10, 20);
+      }
+    }
+    var frameY = y + h - 36;
+    if (frameY < mid + 36) frameY = mid + 36;
+    ctx.strokeRect(x + 8, frameY, w - 90, 18);
+    strokeLine(x + 8, frameY, x + 18, frameY + 18);
+    strokeLine(x + 48, frameY, x + 38, frameY + 18);
+    ctx.fillStyle = INK;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("5 frame", x + w - 78, frameY + 9);
+  }
+
   function drawFps() {
     setFont(14, 500);
     ctx.textAlign = "left";
@@ -1971,6 +2439,7 @@
     drawHatch(v);
     drawLayers(v);
     drawPitAndSurfaceCut(v);
+    drawWorks(v);
     drawCenterlines(v);
     drawPatchDims(v, tb);
     drawLayerDims(v, tb);
@@ -1983,6 +2452,7 @@
     drawScrollStrip(worldW);
     drawFps();
     drawDebug(v);
+    if (modalOpen) drawMachinesModal();
   }
 
   function zoomBy(dy) {
@@ -2102,6 +2572,7 @@
   window.addEventListener("resize", function () { resize(); });
   window.addEventListener("wheel", function (event) {
     event.preventDefault();
+    if (modalOpen) return;
     var dy = event.deltaY;
     if (event.deltaMode === 1) dy *= 16;
     else if (event.deltaMode === 2) dy *= 400;
@@ -2117,12 +2588,16 @@
   window.addEventListener("mousemove", function (event) {
     var p = pointerXY(event);
     pointerY = p.y;
+    if (modalOpen) {
+      canvas.style.cursor = hitRect(modalClose, p.x, p.y) ? "pointer" : "default";
+      return;
+    }
     if (stripDrag) {
       scrollFromPointer(p.y);
       if (stripGeom) stripHot = stripIndexAt(stripGeom, p.y);
       return;
     }
-    if (pointerOnDebug(p.x, p.y) || pointerOnTheme(p.x, p.y)) {
+    if (pointerOnDebug(p.x, p.y) || hitRect(machinesHit, p.x, p.y) || pointerOnTheme(p.x, p.y)) {
       canvas.style.cursor = "pointer";
       return;
     }
@@ -2138,6 +2613,16 @@
   window.addEventListener("mousedown", function (event) {
     if (event.button !== 0) return;
     var p = pointerXY(event);
+    if (modalOpen) {
+      if (!hitRect(modalBox, p.x, p.y) || hitRect(modalClose, p.x, p.y)) modalOpen = false;
+      event.preventDefault();
+      return;
+    }
+    if (hitRect(machinesHit, p.x, p.y)) {
+      modalOpen = true;
+      event.preventDefault();
+      return;
+    }
     if (pointerOnDebug(p.x, p.y)) {
       debugOpen = !debugOpen;
       event.preventDefault();
@@ -2162,6 +2647,10 @@
 
   window.addEventListener("keydown", function (event) {
     var key = event.key;
+    if (modalOpen && key === "Escape") {
+      modalOpen = false;
+      return;
+    }
     if (key === "1" || key === "2" || key === "3") {
       applyPreset(key);
       return;
