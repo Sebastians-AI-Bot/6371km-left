@@ -1591,11 +1591,18 @@
     scrollT = clamp((y - g.y0) / Math.max(1, g.y1 - g.y0), 0, 1);
   }
 
-  /* Alt-wheel scrolls. One notch (deltaY 100) is 1/100 of the way from
-     the 3 m frame to the centre, the same number of metres at every depth. */
+  /* Alt-wheel scrolls by a fifth of the depth in the window. One notch
+     (deltaY 100) is that far up or down. The 3 m frame and the centre stay
+     the stops. Strip drag is still linear in depth. */
   function scrollByWheel(dy) {
-    var t = clamp(scrollT, 0, 1);
-    scrollT = clamp(t + dy * 0.0001, 0, 1);
+    var v = viewOf(currentWorldW());
+    var bottom = Math.min(R, v.top + v.worldH);
+    var origin = Math.max(0, v.top);
+    var height = bottom - origin;
+    if (!(height > 1e-6)) height = v.worldH;
+    var metres = (dy / 100) * (height / 5);
+    var next = clamp(bottom + metres, OPEN_DEPTH, R);
+    scrollT = (next - OPEN_DEPTH) / (R - OPEN_DEPTH);
     wheelLift = true;
   }
 
