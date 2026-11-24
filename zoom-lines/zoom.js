@@ -73,6 +73,10 @@
 
   var logW = Math.log10(nearWidth());
   var lock = "near";
+  /* 0 is the opening 3 m frame. 1 is the centre of the Earth. */
+  var scrollT = 0;
+  var OPEN_DEPTH = 3;
+  var OPEN_SKY = 0.2;
   /* Presented frames, not a tight redraw loop. A bucket of about a tenth
      of a second: frames in the bucket divided by the time those frames spanned. */
   var fpsLabel = "— fps";
@@ -88,8 +92,20 @@
     return PATCH / 0.4;
   }
 
+  function closeWidth() {
+    return 2;
+  }
+
   function farWidth(aspect) {
     return 2.75 * R * Math.max(aspect, 1);
+  }
+
+  function openWorldH() {
+    return OPEN_DEPTH / (1 - OPEN_SKY);
+  }
+
+  function shallowTop() {
+    return -OPEN_SKY * openWorldH();
   }
 
   function clamp(v, a, b) {
@@ -166,15 +182,17 @@
     var box = sheetBox();
     var aspect = box.w / Math.max(1, box.h);
     var worldH = worldW / aspect;
-    var sNear = 0.2;
-    var topNear = -sNear * worldH;
-    var topFar = R - worldH / 2;
-    var logH = Math.log10(Math.max(worldH, 1));
-    var u = smoothstep(
-      (logH - Math.log10(0.35 * R)) / (Math.log10(2.6 * R) - Math.log10(0.35 * R))
-    );
-    var top = lerp(topNear, topFar, u);
-    if (u < 0.999) top = clamp(top, -0.42 * worldH, -0.05 * worldH);
+    var top0 = shallowTop();
+    var top1 = R - worldH;
+    var top;
+    if (top1 <= top0) {
+      top = R - worldH / 2;
+    } else {
+      var t = clamp(scrollT, 0, 1);
+      var bot0 = top0 + worldH;
+      var bot = bot0 * Math.pow(R / Math.max(bot0, 0.05), t);
+      top = clamp(bot - worldH, top0, top1);
+    }
     return {
       box: box,
       worldW: worldW,
@@ -1327,10 +1345,72 @@
   }
 
   function widthForLock(aspect) {
-    if (lock === "near") return nearWidth();
+    if (lock === "near") return openWorldH() * aspect;
     if (lock === "middle") return 60000 * aspect;
     if (lock === "globe") return farWidth(aspect);
     return null;
+  }
+
+  var stripGeom = null;
+  var stripHot = -1;
+  var stripDrag = false;
+
+  function scrollStripGeom(tb) {
+    var n = 21;
+    var y0 = tb.y + 7;
+    var y1 = tb.y + tb.h - 7;
+    var axis = tb.x - 20;
+    return {
+      x: axis - 28,
+      y: tb.y,
+      w: 36,
+      h: tb.h,
+      n: n,
+      y0: y0,
+      y1: y1,
+      axis: axis
+    };
+  }
+
+  function stripIndexAt(g, y) {
+    return clamp((y - g.y0) / Math.max(1, g.y1 - g.y0), 0, 1) * (g.n - 1);
+  }
+
+  function dockWeight(dist) {
+    var a = Math.abs(dist);
+    var reach = 2.7;
+    if (a >= reach) return 0;
+    return Math.cos((a / reach) * Math.PI * 0.5);
+  }
+
+  function drawScrollStrip(tb) {
+    var g = scrollStripGeom(tb);
+    stripGeom = g;
+    var active = scrollT * (g.n - 1);
+    var center = stripHot >= 0 ? stripHot : active;
+    var i;
+    for (i = 0; i < g.n; i++) {
+      var y = g.y0 + (g.y1 - g.y0) * (i / (g.n - 1));
+      var w = dockWeight(i - center);
+      var len = 8 + w * 20;
+      ctx.strokeStyle = w > 0.82 ? INK : w > 0.45 ? MID : w > 0.16 ? FAINT : HAIR;
+      ctx.lineWidth = 1.05 + w * 0.85;
+      ctx.lineCap = "round";
+      ctx.setLineDash([]);
+      strokeLine(g.axis - len / 2, y, g.axis + len / 2, y);
+    }
+  }
+
+  function pointerOnStrip(x, y) {
+    var g = stripGeom;
+    if (!g) return false;
+    return x >= g.x && x <= g.x + g.w && y >= g.y && y <= g.y + g.h;
+  }
+
+  function scrollFromPointer(y) {
+    var g = stripGeom;
+    if (!g) return;
+    scrollT = clamp((y - g.y0) / Math.max(1, g.y1 - g.y0), 0, 1);
   }
 
   function drawFps() {
@@ -1353,7 +1433,7 @@
     var aspect = sheetBox().w / Math.max(1, sheetBox().h);
     var forced = widthForLock(aspect);
     var worldW = forced === null
-      ? clamp(Math.pow(10, logW), nearWidth(), farWidth(aspect))
+      ? clamp(Math.pow(10, logW), closeWidth(), farWidth(aspect))
       : forced;
     logW = Math.log10(worldW);
     var v = viewOf(worldW);
@@ -1377,6 +1457,7 @@
     ctx.restore();
 
     drawFrame(v, tb);
+    drawScrollStrip(tb);
     drawFps();
   }
 
@@ -1390,6 +1471,7 @@
     else if (name === "middle" || name === "crust" || name === "2") lock = "middle";
     else if (name === "globe" || name === "3") lock = "globe";
     else return false;
+    scrollT = 0;
     return true;
   }
 
@@ -1438,6 +1520,40 @@
     zoomBy(dy);
   }, { passive: false });
 
+  function pointerXY(event) {
+    return { x: event.clientX, y: event.clientY };
+  }
+
+  window.addEventListener("mousemove", function (event) {
+    var p = pointerXY(event);
+    if (stripDrag) {
+      scrollFromPointer(p.y);
+      if (stripGeom) stripHot = stripIndexAt(stripGeom, p.y);
+      return;
+    }
+    if (pointerOnStrip(p.x, p.y)) {
+      stripHot = stripIndexAt(stripGeom, p.y);
+      canvas.style.cursor = "ns-resize";
+    } else {
+      stripHot = -1;
+      canvas.style.cursor = "crosshair";
+    }
+  });
+
+  window.addEventListener("mousedown", function (event) {
+    if (event.button !== 0) return;
+    var p = pointerXY(event);
+    if (!pointerOnStrip(p.x, p.y)) return;
+    stripDrag = true;
+    scrollFromPointer(p.y);
+    stripHot = stripIndexAt(stripGeom, p.y);
+    event.preventDefault();
+  });
+
+  window.addEventListener("mouseup", function () {
+    stripDrag = false;
+  });
+
   window.addEventListener("keydown", function (event) {
     var key = event.key;
     if (key === "1" || key === "2" || key === "3") {
@@ -1466,14 +1582,16 @@
       var aspect = sheetBox().w / Math.max(1, sheetBox().h);
       var forced = widthForLock(aspect);
       var worldW = forced === null
-        ? clamp(Math.pow(10, logW), nearWidth(), farWidth(aspect))
+        ? clamp(Math.pow(10, logW), closeWidth(), farWidth(aspect))
         : forced;
       var v = viewOf(worldW);
       return {
         worldW: v.worldW,
         worldH: v.worldH,
         depth: shownDepth(v).text,
-        top: v.top
+        top: v.top,
+        scroll: scrollT,
+        strip: stripGeom
       };
     }
   };
