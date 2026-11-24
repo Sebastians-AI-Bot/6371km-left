@@ -2091,6 +2091,87 @@
     return !!r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
   }
 
+  function ink(w) {
+    ctx.strokeStyle = INK;
+    ctx.fillStyle = INK;
+    ctx.lineWidth = w || 1.15;
+    ctx.lineJoin = "miter";
+    ctx.lineCap = "butt";
+    ctx.setLineDash([]);
+  }
+
+  function bolt(x, y, r) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  function gearAt(cx, cy, r, n) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    var i;
+    for (i = 0; i < n; i++) {
+      var a = (i / n) * Math.PI * 2;
+      strokeLine(
+        cx + Math.cos(a) * r,
+        cy + Math.sin(a) * r,
+        cx + Math.cos(a) * (r + Math.max(3, r * 0.18)),
+        cy + Math.sin(a) * (r + Math.max(3, r * 0.18))
+      );
+    }
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(2, r * 0.28), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  function leader(x0, y0, x1, y1) {
+    ctx.save();
+    ctx.strokeStyle = MID;
+    ctx.lineWidth = 0.75;
+    ctx.setLineDash([3, 2.5]);
+    var bend = y0 + (y1 - y0) * 0.72;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x0, bend);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function callout(x, y, n, name) {
+    ctx.save();
+    ctx.setLineDash([]);
+    ink(0.9);
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
+    ctx.stroke();
+    setFont(10, 500);
+    ctx.fillStyle = INK;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(n), x, y + 0.5);
+    setFont(12);
+    ctx.textAlign = "left";
+    var tw = ctx.measureText(name).width;
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(x + 10, y - 8, tw + 4, 16);
+    ctx.fillStyle = INK;
+    ctx.fillText(name, x + 12, y);
+    ctx.restore();
+  }
+
+  function placed(a, dw, dh, gutterX, gutterY) {
+    var aw = Math.max(20, a.w - (gutterX || 0));
+    var ah = Math.max(20, a.h - (gutterY || 0));
+    var s = Math.min(aw / dw, ah / dh);
+    return {
+      s: s,
+      x: a.x + (aw - dw * s) / 2,
+      y: a.y + (ah - dh * s) / 2
+    };
+  }
+
   function drawMachinesModal() {
     var box = { x: 0, y: 16, w: Math.max(280, cssW - 52), h: Math.max(220, cssH - 32) };
     var close = { x: box.x + box.w - 28, y: box.y + 8, w: 18, h: 18 };
@@ -2108,60 +2189,76 @@
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     ctx.fillText("machines", box.x + 16, box.y + 18);
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1.15;
+    ink(1.15);
     strokeLine(close.x + 4, close.y + 4, close.x + close.w - 4, close.y + close.h - 4);
     strokeLine(close.x + close.w - 4, close.y + 4, close.x + 4, close.y + close.h - 4);
     ctx.strokeStyle = MID;
     ctx.lineWidth = 0.8;
     strokeLine(box.x, box.y + 36, box.x + box.w, box.y + 36);
 
-    var inner = { x: box.x + 16, y: box.y + 44, w: box.w - 32, h: box.h - 58 };
-    var topH = Math.round(inner.h * 0.56);
-    var cols = 4;
-    var rows = 2;
-    var cw = inner.w / cols;
-    var ch = topH / rows;
-    var icons = [
+    var inner = { x: box.x + 8, y: box.y + 44, w: box.w - 16, h: box.h - 56 };
+    var expH = Math.round(inner.h * 0.48);
+    var catH = inner.h - expH;
+    var row1 = Math.round(catH * 0.48);
+    var row2 = catH - row1;
+    var topW = [0.15, 0.17, 0.34, 0.34];
+    var botW = [0.24, 0.46, 0.30];
+    var names = [
       ["hand shovel", "0.9 m", iconShovel],
       ["pickaxe", "0.7 m", iconPick],
-      ["elevator cage", "0.9 m", iconCage],
-      ["water pump", "0.5 m", iconPump],
+      ["elevator cage", "4 m", iconCage],
+      ["water pump", "0.8 m", iconPump],
       ["rotary drill", "8 m", iconDrill],
       ["bucket conveyor", "6 m", iconConveyor],
       ["boring head", "4 m", iconHead]
     ];
+    var acc = 0;
     var i;
-    for (i = 0; i < icons.length; i++) {
-      var col = i % cols;
-      var row = Math.floor(i / cols);
-      var cell = { x: inner.x + col * cw, y: inner.y + row * ch, w: cw, h: ch };
-      drawMachineCell(cell, icons[i][0], icons[i][1], icons[i][2]);
+    for (i = 0; i < 4; i++) {
+      var cw = inner.w * topW[i];
+      drawMachineCell(
+        { x: inner.x + acc, y: inner.y, w: cw, h: row1 },
+        names[i][0], names[i][1], names[i][2]
+      );
+      acc += cw;
+    }
+    acc = 0;
+    for (i = 0; i < 3; i++) {
+      var cw2 = inner.w * botW[i];
+      drawMachineCell(
+        { x: inner.x + acc, y: inner.y + row1, w: cw2, h: row2 },
+        names[i + 4][0], names[i + 4][1], names[i + 4][2]
+      );
+      acc += cw2;
     }
     ctx.strokeStyle = MID;
     ctx.lineWidth = 0.7;
-    strokeLine(inner.x, inner.y + topH, inner.x + inner.w, inner.y + topH);
-    drawExploded(inner.x, inner.y + topH + 8, inner.w, inner.h - topH - 8);
+    strokeLine(inner.x, inner.y + catH, inner.x + inner.w, inner.y + catH);
+    drawExploded(inner.x, inner.y + catH + 6, inner.w, expH - 8);
     ctx.restore();
   }
 
   function drawMachineCell(cell, name, dim, drawIcon) {
-    var pad = 8;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(cell.x, cell.y, cell.w, cell.h);
+    ctx.clip();
     var area = {
-      x: cell.x + pad,
-      y: cell.y + 4,
-      w: cell.w - pad * 2,
+      x: cell.x + 8,
+      y: cell.y + 2,
+      w: cell.w - 16,
       h: cell.h - 22
     };
     drawIcon(area, dim);
-    setFont(11);
+    setFont(12);
     ctx.fillStyle = INK;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
-    ctx.fillText(name, cell.x + cell.w / 2, cell.y + cell.h - 2);
+    ctx.fillText(name, cell.x + cell.w / 2, cell.y + cell.h - 3);
+    ctx.restore();
   }
 
-  function dimTick(x0, y0, x1, y1, label) {
+  function dimTick(x0, y0, x1, y1, label, below) {
     ctx.save();
     ctx.strokeStyle = MID;
     ctx.fillStyle = INK;
@@ -2177,11 +2274,12 @@
       strokeLine(x0, y - 3, x0, y + 3);
       strokeLine(x1, y - 3, x1, y + 3);
       ctx.fillStyle = PAPER;
-      ctx.fillRect(mid - tw / 2 - 2, y - 12, tw + 4, 11);
+      if (below) ctx.fillRect(mid - tw / 2 - 2, y + 2, tw + 4, 12);
+      else ctx.fillRect(mid - tw / 2 - 2, y - 13, tw + 4, 12);
       ctx.fillStyle = INK;
       ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
-      ctx.fillText(label, mid, y - 2);
+      ctx.textBaseline = below ? "top" : "bottom";
+      ctx.fillText(label, mid, below ? y + 3 : y - 2);
     } else {
       var x = x0;
       var my = (y0 + y1) / 2;
@@ -2200,208 +2298,583 @@
     ctx.restore();
   }
 
-  function iconShovel(a) {
-    var x = a.x + a.w * 0.5;
-    var y0 = a.y + 6;
-    var y1 = a.y + a.h - 18;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1.1;
-    ctx.lineCap = "round";
-    strokeLine(x, y0 + 8, x, y1 - 16);
-    strokeLine(x - 7, y0 + 8, x + 7, y0 + 8);
+  function iconShovel(a, dim) {
+    var g = placed(a, 48, 140, 22, 0);
+    var s = g.s;
+    var ox = g.x;
+    var oy = g.y;
+    function X(v) { return ox + v * s; }
+    function Y(v) { return oy + v * s; }
+    ink(1.2);
     ctx.beginPath();
-    ctx.moveTo(x - 12, y1 - 16);
-    ctx.lineTo(x - 14, y1);
-    ctx.lineTo(x + 14, y1);
-    ctx.lineTo(x + 12, y1 - 16);
+    ctx.moveTo(X(17), Y(18));
+    ctx.lineTo(X(17), Y(12));
+    ctx.quadraticCurveTo(X(6), Y(13), X(6), Y(6));
+    ctx.quadraticCurveTo(X(6), Y(0), X(20), Y(0));
+    ctx.quadraticCurveTo(X(34), Y(0), X(34), Y(6));
+    ctx.quadraticCurveTo(X(34), Y(13), X(23), Y(12));
+    ctx.lineTo(X(23), Y(18));
     ctx.stroke();
-    dimTick(x + 18, y0, x + 18, y1, "0.9 m");
+    strokeLine(X(10), Y(7), X(30), Y(7));
+    strokeLine(X(18), Y(16), X(18), Y(86));
+    strokeLine(X(22), Y(16), X(22), Y(86));
+    ctx.strokeRect(X(15), Y(82), X(25) - X(15), Y(92) - Y(82));
+    ctx.beginPath();
+    ctx.moveTo(X(16), Y(90));
+    ctx.lineTo(X(5), Y(100));
+    ctx.quadraticCurveTo(X(2), Y(122), X(20), Y(136));
+    ctx.quadraticCurveTo(X(38), Y(122), X(35), Y(100));
+    ctx.lineTo(X(24), Y(90));
+    ctx.stroke();
+    strokeLine(X(20), Y(96), X(20), Y(132));
+    strokeLine(X(8), Y(104), X(32), Y(104));
+    dimTick(X(44), Y(0), X(44), Y(136), dim);
   }
 
-  function iconPick(a) {
-    var x = a.x + a.w * 0.48;
-    var y0 = a.y + 10;
-    var y1 = a.y + a.h - 16;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1.1;
-    ctx.lineCap = "round";
-    strokeLine(x - 22, y0 + 6, x + 26, y0 + 18);
-    strokeLine(x + 2, y0 + 12, x + 6, y1);
-    dimTick(x + 22, y0, x + 22, y1, "0.7 m");
+  function iconPick(a, dim) {
+    var g = placed(a, 128, 132, 8, 0);
+    var s = g.s;
+    var ox = g.x;
+    var oy = g.y;
+    function X(v) { return ox + v * s; }
+    function Y(v) { return oy + v * s; }
+    ink(1.2);
+    ctx.beginPath();
+    ctx.moveTo(X(2), Y(28));
+    ctx.quadraticCurveTo(X(22), Y(16), X(44), Y(18));
+    ctx.lineTo(X(44), Y(36));
+    ctx.quadraticCurveTo(X(22), Y(34), X(2), Y(28));
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(X(108), Y(34));
+    ctx.quadraticCurveTo(X(88), Y(14), X(62), Y(18));
+    ctx.lineTo(X(62), Y(36));
+    ctx.quadraticCurveTo(X(88), Y(36), X(108), Y(34));
+    ctx.stroke();
+    ctx.strokeRect(X(44), Y(14), X(62) - X(44), Y(40) - Y(14));
+    strokeLine(X(49), Y(40), X(49), Y(122));
+    strokeLine(X(57), Y(40), X(57), Y(122));
+    strokeLine(X(46), Y(118), X(60), Y(118));
+    strokeLine(X(47), Y(122), X(59), Y(122));
+    dimTick(X(118), Y(4), X(118), Y(122), dim);
   }
 
-  function iconCage(a) {
-    var x = a.x + a.w * 0.28;
-    var y0 = a.y + 4;
-    var w = Math.min(a.w * 0.46, 70);
-    var h = a.h - 22;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1;
-    strokeLine(x, y0 + h, x, y0 + 16);
-    strokeLine(x + w, y0 + h, x + w, y0 + 16);
-    strokeLine(x, y0 + 16, x + w / 2, y0);
-    strokeLine(x + w, y0 + 16, x + w / 2, y0);
-    var cy = y0 + h * 0.42;
-    var ch = h * 0.4;
-    ctx.strokeRect(x + 8, cy, w - 16, ch);
+  function iconCage(a, dim) {
+    var g = placed(a, 200, 128, 28, 0);
+    var s = g.s;
+    var ox = g.x;
+    var oy = g.y;
+    function X(v) { return ox + v * s; }
+    function Y(v) { return oy + v * s; }
+    ink(1.15);
+    ctx.strokeRect(X(28), Y(112), X(172) - X(28), Y(124) - Y(112));
+    bolt(X(40), Y(118), 1.6 * s);
+    bolt(X(160), Y(118), 1.6 * s);
+    strokeLine(X(46), Y(16), X(46), Y(112));
+    strokeLine(X(54), Y(16), X(54), Y(112));
+    strokeLine(X(146), Y(16), X(146), Y(112));
+    strokeLine(X(154), Y(16), X(154), Y(112));
+    ctx.strokeRect(X(36), Y(4), X(164) - X(36), Y(16) - Y(4));
+    ctx.beginPath();
+    ctx.arc(X(100), Y(10), 5 * s, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(X(100), Y(10), 2 * s, 0, Math.PI * 2);
+    ctx.stroke();
+    strokeLine(X(54), Y(16), X(100), Y(52));
+    strokeLine(X(146), Y(16), X(100), Y(52));
+    strokeLine(X(54), Y(78), X(146), Y(28));
+    ink(0.9);
+    strokeLine(X(100), Y(15), X(100), Y(58));
+    ink(1.15);
+    ctx.strokeRect(X(72), Y(58), X(128) - X(72), Y(100) - Y(58));
+    strokeLine(X(68), Y(100), X(132), Y(100));
+    strokeLine(X(68), Y(104), X(132), Y(104));
+    var i;
+    for (i = 1; i <= 4; i++) {
+      var bx = 72 + (56 * i) / 5;
+      strokeLine(X(bx), Y(58), X(bx), Y(100));
+    }
+    strokeLine(X(72), Y(74), X(128), Y(74));
+    dimTick(X(184), Y(4), X(184), Y(124), dim);
+  }
+
+  function iconPump(a, dim) {
+    var g = placed(a, 250, 108, 0, 0);
+    var s = g.s;
+    var ox = g.x;
+    var oy = g.y;
+    function X(v) { return ox + v * s; }
+    function Y(v) { return oy + v * s; }
+    ink(1.15);
+    ctx.strokeRect(X(8), Y(78), X(236) - X(8), Y(88) - Y(78));
+    bolt(X(18), Y(83), 1.7 * s);
+    bolt(X(226), Y(83), 1.7 * s);
+    strokeLine(X(22), Y(88), X(22), Y(94));
+    strokeLine(X(222), Y(88), X(222), Y(94));
+    ctx.beginPath();
+    ctx.arc(X(68), Y(56), 24 * s, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(X(70), Y(54), 26 * s, -0.2, Math.PI * 1.25);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(X(68), Y(56), 9 * s, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeRect(X(6), Y(48), X(44) - X(6), Y(64) - Y(48));
+    strokeLine(X(6), Y(44), X(6), Y(68));
+    bolt(X(6), Y(48), 1.5 * s);
+    bolt(X(6), Y(64), 1.5 * s);
+    ctx.strokeRect(X(58), Y(10), X(80) - X(58), Y(34) - Y(10));
+    strokeLine(X(54), Y(10), X(84), Y(10));
+    bolt(X(58), Y(10), 1.4 * s);
+    bolt(X(80), Y(10), 1.4 * s);
+    strokeLine(X(92), Y(52), X(112), Y(52));
+    strokeLine(X(92), Y(60), X(112), Y(60));
+    ctx.strokeRect(X(100), Y(50), X(106) - X(100), Y(62) - Y(50));
+    ctx.strokeRect(X(114), Y(36), X(214) - X(114), Y(74) - Y(36));
+    var i;
+    for (i = 0; i < 9; i++) strokeLine(X(122 + i * 8), Y(36), X(122 + i * 8), Y(74));
+    ctx.beginPath();
+    ctx.arc(X(214), Y(55), 19 * s, -Math.PI / 2, Math.PI / 2);
+    ctx.stroke();
+    ctx.strokeRect(X(142), Y(22), X(170) - X(142), Y(36) - Y(22));
+    ctx.save();
+    ctx.strokeStyle = MID;
+    ctx.lineWidth = 0.6;
+    ctx.setLineDash([2, 2]);
+    strokeLine(X(44), Y(56), X(214), Y(56));
+    ctx.restore();
+    dimTick(X(8), Y(102), X(236), Y(102), dim);
+  }
+
+  function iconDrill(a, dim) {
+    var g = placed(a, 124, 170, 8, 0);
+    var s = g.s;
+    var ox = g.x;
+    var oy = g.y;
+    function X(v) { return ox + v * s; }
+    function Y(v) { return oy + v * s; }
+    ink(1.15);
+    ctx.strokeRect(X(22), Y(140), X(96) - X(22), Y(150) - Y(140));
+    strokeLine(X(22), Y(150), X(10), Y(162));
+    strokeLine(X(96), Y(150), X(108), Y(162));
+    strokeLine(X(10), Y(162), X(10), Y(168));
+    strokeLine(X(108), Y(162), X(108), Y(168));
+    strokeLine(X(40), Y(12), X(40), Y(140));
+    strokeLine(X(47), Y(12), X(47), Y(140));
+    strokeLine(X(67), Y(12), X(67), Y(140));
+    strokeLine(X(74), Y(12), X(74), Y(140));
+    var i;
+    for (i = 0; i < 6; i++) strokeLine(X(47), Y(30 + i * 16), X(67), Y(30 + i * 16));
+    ctx.strokeRect(X(34), Y(2), X(80) - X(34), Y(14) - Y(2));
+    ctx.beginPath();
+    ctx.arc(X(57), Y(8), 4 * s, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeRect(X(28), Y(36), X(86) - X(28), Y(60) - Y(36));
+    ctx.beginPath();
+    ctx.arc(X(57), Y(48), 7 * s, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(X(57), Y(48), 2.5 * s, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeRect(X(4), Y(38), X(28) - X(4), Y(58) - Y(38));
+    for (i = 0; i < 4; i++) strokeLine(X(8 + i * 4.5), Y(38), X(8 + i * 4.5), Y(58));
+    strokeLine(X(52), Y(60), X(52), Y(112));
+    strokeLine(X(62), Y(60), X(62), Y(112));
+    for (i = 0; i < 6; i++) {
+      var yy = 112 + i * 6;
+      ctx.beginPath();
+      ctx.moveTo(X(44), Y(yy));
+      ctx.quadraticCurveTo(X(57), Y(yy - 5), X(70), Y(yy));
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(X(48), Y(146));
+    ctx.lineTo(X(57), Y(160));
+    ctx.lineTo(X(66), Y(146));
+    ctx.stroke();
+    ink(0.9);
+    ctx.beginPath();
+    ctx.moveTo(X(28), Y(56));
+    ctx.quadraticCurveTo(X(14), Y(96), X(30), Y(138));
+    ctx.stroke();
+    dimTick(X(116), Y(2), X(116), Y(166), dim);
+  }
+
+  function iconConveyor(a, dim) {
+    var g = placed(a, 360, 128, 0, 0);
+    var s = g.s;
+    var ox = g.x;
+    var oy = g.y;
+    function X(v) { return ox + v * s; }
+    function Y(v) { return oy + v * s; }
+    ink(1.15);
+    var x0 = 48;
+    var y0 = 86;
+    var x1 = 300;
+    var y1 = 26;
+    var dx = x1 - x0;
+    var dy = y1 - y0;
+    var len = Math.sqrt(dx * dx + dy * dy);
+    var nx = dy / len;
+    var ny = -dx / len;
+    if (ny < 0) { nx = -nx; ny = -ny; }
+    strokeLine(X(x0), Y(y0), X(x1), Y(y1));
+    strokeLine(X(x0 + nx * 5), Y(y0 + ny * 5), X(x1 + nx * 5), Y(y1 + ny * 5));
+    strokeLine(X(x0 + nx * 16), Y(y0 + ny * 16), X(x1 + nx * 16), Y(y1 + ny * 16));
+    function pulley(px, py, r) {
+      ctx.beginPath();
+      ctx.arc(X(px), Y(py), r * s, 0, Math.PI * 2);
+      ctx.stroke();
+      strokeLine(X(px - r), Y(py), X(px + r), Y(py));
+      strokeLine(X(px), Y(py - r), X(px), Y(py + r));
+    }
+    pulley(x1, y1, 12);
+    pulley(x0, y0, 9);
     var i;
     for (i = 1; i <= 3; i++) {
-      var bx = x + 8 + (w - 16) * i / 4;
-      strokeLine(bx, cy, bx, cy + ch);
+      var t = i / 4;
+      var ix = x0 + dx * t + nx * 16;
+      var iy = y0 + dy * t + ny * 16;
+      ctx.beginPath();
+      ctx.arc(X(ix), Y(iy), 3 * s, 0, Math.PI * 2);
+      ctx.stroke();
     }
-    strokeLine(x + w / 2, y0 + 2, x + w / 2, cy);
-    dimTick(x + w + 10, cy, x + w + 10, cy + ch, "0.9 m");
-  }
-
-  function iconPump(a) {
-    var x = a.x + a.w * 0.22;
-    var y = a.y + a.h * 0.45;
-    var w = Math.min(64, a.w * 0.4);
-    var h = Math.min(28, a.h * 0.28);
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1.1;
-    ctx.strokeRect(x, y, w, h);
-    ctx.beginPath();
-    ctx.arc(x + w * 0.72, y + h / 2, h * 0.32, 0, Math.PI * 2);
-    ctx.stroke();
-    strokeLine(x, y + h * 0.4, x - 16, y + h * 0.4);
-    strokeLine(x - 4, y + h, x + w + 6, y + h);
-    dimTick(x, y + h + 14, x + w, y + h + 14, "0.5 m");
-  }
-
-  function iconDrill(a) {
-    var x = a.x + a.w * 0.55;
-    var y0 = a.y + 2;
-    var y1 = a.y + a.h - 16;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1;
-    strokeLine(x, y0, x, y1);
-    strokeLine(x - 5, y0, x - 5, y1 - 18);
-    ctx.strokeRect(x - 16, y0 + 8, 22, 18);
-    ctx.beginPath();
-    ctx.arc(x - 5, y0 + 28, 5, 0, Math.PI * 2);
-    ctx.stroke();
-    var i;
-    for (i = 0; i < 5; i++) {
-      var yy = y1 - 16 - i * 4;
-      strokeLine(x - 7, yy, x + 3, yy - 3);
+    for (i = 0; i < 4; i++) {
+      var u = 0.18 + i * 0.18;
+      var bx = x0 + dx * u;
+      var by = y0 + dy * u;
+      strokeLine(X(bx), Y(by), X(bx + nx * 8), Y(by + ny * 8));
+      var lip = 7;
+      var deep = 16;
+      ctx.beginPath();
+      ctx.moveTo(X(bx + nx * 8 - lip), Y(by + ny * 8));
+      ctx.lineTo(X(bx + nx * deep - lip - 2), Y(by + ny * deep));
+      ctx.lineTo(X(bx + nx * deep + lip + 2), Y(by + ny * deep));
+      ctx.lineTo(X(bx + nx * 8 + lip), Y(by + ny * 8));
+      ctx.closePath();
+      ctx.stroke();
     }
-    dimTick(x + 14, y0, x + 14, y1, "8 m");
-  }
-
-  function iconConveyor(a) {
-    var x0 = a.x + 8;
-    var x1 = a.x + a.w - 16;
-    var y0 = a.y + 16;
-    var y1 = a.y + a.h - 28;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1;
-    strokeLine(x0, y1, x1, y0);
-    strokeLine(x0, y1 + 5, x1, y0 + 5);
+    var postT = 0.42;
+    var postX = x0 + dx * postT;
+    strokeLine(X(postX), Y(y0 + dy * postT + ny * 16), X(postX), Y(112));
+    strokeLine(X(postX - 10), Y(112), X(postX + 10), Y(112));
+    ctx.strokeRect(X(8), Y(78), X(40) - X(8), Y(104) - Y(78));
+    var fin;
+    for (fin = 0; fin < 3; fin++) strokeLine(X(12 + fin * 5), Y(78), X(12 + fin * 5), Y(104));
     ctx.beginPath();
-    ctx.arc(x1, y0 + 2, 5, 0, Math.PI * 2);
+    ctx.arc(X(30), Y(91), 6 * s, 0, Math.PI * 2);
     ctx.stroke();
-    strokeLine(x0 + (x1 - x0) * 0.25, y1, x0 + (x1 - x0) * 0.25, y1 + 16);
-    var i;
-    for (i = 0; i < 3; i++) {
-      var t = 0.2 + i * 0.22;
-      var bx = x0 + (x1 - x0) * t;
-      var by = y1 + (y0 - y1) * t + 5;
-      ctx.strokeRect(bx - 5, by, 10, 8);
-    }
-    ctx.strokeRect(x1 - 18, y0 + 8, 20, 12);
-    dimTick(x0, y1 + 28, x1, y1 + 28, "6 m");
+    strokeLine(X(40), Y(86), X(48), Y(82));
+    strokeLine(X(40), Y(96), X(48), Y(92));
+    strokeLine(X(16), Y(116), X(332), Y(116));
+    dimTick(X(20), Y(116), X(324), Y(116), dim);
   }
 
-  function iconHead(a) {
-    var cx = a.x + a.w * 0.42;
-    var cy = a.y + a.h * 0.42;
-    var r = Math.min(a.w, a.h) * 0.28;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1;
+  function iconHead(a, dim) {
+    var g = placed(a, 150, 150, 0, 18);
+    var s = g.s;
+    var cx = g.x + 75 * s;
+    var cy = g.y + 75 * s;
+    var r = 68 * s;
+    ink(1.2);
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(cx, cy, r * 0.28, 0, Math.PI * 2);
+    ctx.arc(cx, cy, r * 0.9, 0, Math.PI * 2);
     ctx.stroke();
     var i;
-    for (i = 0; i < 8; i++) {
-      var ang = i * Math.PI / 4;
-      strokeLine(cx + Math.cos(ang) * r * 0.35, cy + Math.sin(ang) * r * 0.35, cx + Math.cos(ang) * r, cy + Math.sin(ang) * r);
+    var k;
+    for (i = 0; i < 6; i++) {
+      var ang = -Math.PI / 2 + i * Math.PI / 3;
+      var c = Math.cos(ang);
+      var sn = Math.sin(ang);
+      var px = -sn;
+      var py = c;
+      var inner = r * 0.24;
+      var outer = r * 0.88;
+      var slot = Math.max(3.5, r * 0.055);
+      strokeLine(cx + c * inner + px * slot, cy + sn * inner + py * slot, cx + c * outer + px * slot, cy + sn * outer + py * slot);
+      strokeLine(cx + c * inner - px * slot, cy + sn * inner - py * slot, cx + c * outer - px * slot, cy + sn * outer - py * slot);
+      for (k = 0; k < 3; k++) {
+        var t = 0.35 + k * 0.22;
+        var mx = cx + c * (inner + (outer - inner) * t);
+        var my = cy + sn * (inner + (outer - inner) * t);
+        ctx.beginPath();
+        ctx.arc(mx, my, slot * 0.85, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
-    dimTick(cx - r, cy + r + 16, cx + r, cy + r + 16, "4 m");
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.16, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeRect(cx - r * 0.06, cy - r * 0.06, r * 0.12, r * 0.12);
+    for (i = 0; i < 12; i++) {
+      var ba = (i / 12) * Math.PI * 2;
+      bolt(cx + Math.cos(ba) * r * 0.78, cy + Math.sin(ba) * r * 0.78, Math.max(1.3, r * 0.018));
+    }
+    dimTick(cx - r, cy + r + 12, cx + r, cy + r + 12, dim);
   }
 
   function drawExploded(x, y, w, h) {
-    setFont(12, 500);
+    ink(1.05);
+    setFont(13, 500);
     ctx.fillStyle = INK;
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.fillText("drill, exploded", x, y);
-    var n = 5;
-    var slot = w / n;
-    var labelY = y + 28;
-    var mid = y + 36 + Math.min(36, h * 0.22);
-    var names = ["1 motor", "2 gearbox", "3 rod", "4 head", "6 reel"];
-    var i;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1.05;
-    ctx.lineJoin = "miter";
-    setFont(11);
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    for (i = 0; i < n; i++) {
-      var cx = x + slot * (i + 0.5);
-      ctx.fillStyle = INK;
-      ctx.fillText(names[i], cx, labelY);
-      if (i === 0) {
-        ctx.strokeRect(cx - 16, mid - 12, 32, 24);
-        ctx.beginPath();
-        ctx.arc(cx, mid, 6, 0, Math.PI * 2);
-        ctx.stroke();
-      } else if (i === 1) {
-        ctx.strokeRect(cx - 16, mid - 12, 32, 24);
-        ctx.beginPath();
-        ctx.arc(cx - 6, mid, 5, 0, Math.PI * 2);
-        ctx.arc(cx + 6, mid, 5, 0, Math.PI * 2);
-        ctx.stroke();
-      } else if (i === 2) {
-        var rw = Math.min(slot - 28, 110);
-        ctx.strokeRect(cx - rw / 2, mid - 3, rw, 6);
-        var k;
-        for (k = 0; k < 7; k++) {
-          var tx = cx - rw / 2 + 8 + k * (rw - 16) / 6;
-          strokeLine(tx, mid - 3, tx, mid + 3);
-        }
-        dimTick(cx - rw / 2, mid + 16, cx + rw / 2, mid + 16, "3 m");
-      } else if (i === 3) {
-        ctx.beginPath();
-        ctx.moveTo(cx - 18, mid);
-        ctx.lineTo(cx + 10, mid - 14);
-        ctx.lineTo(cx + 10, mid + 14);
-        ctx.closePath();
-        ctx.stroke();
-        strokeLine(cx + 10, mid - 10, cx + 20, mid - 16);
-        strokeLine(cx + 10, mid - 2, cx + 22, mid - 2);
-        strokeLine(cx + 10, mid + 8, cx + 20, mid + 14);
-      } else {
-        ctx.beginPath();
-        ctx.arc(cx, mid, 14, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.strokeRect(cx - 5, mid - 10, 10, 20);
-      }
-    }
-    var frameY = y + h - 36;
-    if (frameY < mid + 36) frameY = mid + 36;
-    ctx.strokeRect(x + 8, frameY, w - 90, 18);
-    strokeLine(x + 8, frameY, x + 18, frameY + 18);
-    strokeLine(x + 48, frameY, x + 38, frameY + 18);
-    ctx.fillStyle = INK;
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    ctx.fillText("5 frame", x + w - 78, frameY + 9);
+    ctx.fillText("drill, exploded", x + 4, y);
+
+    var top = y + 26;
+    var H = Math.max(100, h - 32);
+    var motorW = Math.max(120, Math.min(210, w * 0.16));
+    var motorH = Math.max(100, Math.min(H * 0.58, 200));
+    var motorX = x + 42;
+    var motorY = top + 2;
+    var reelW = Math.max(96, Math.min(160, w * 0.12));
+    var reelH = Math.max(52, Math.min(motorH * 0.5, 100));
+    var gearR = Math.max(15, Math.min(28, reelH * 0.32));
+    var caseW = Math.max(84, Math.min(130, w * 0.1));
+    var caseH = Math.max(54, gearR * 2.5);
+    var reelX = x + w - 16 - reelW;
+    var looseX = reelX - 40 - gearR;
+    var caseX = looseX - gearR - 44 - caseW;
+    var axis = motorY + motorH * 0.38;
+    var midL = motorX + motorW + 36;
+    var midR = caseX - 48;
+    var mid = Math.max(120, midR - midL);
+    var headLen = Math.max(78, Math.min(128, mid * 0.2));
+    var gap = Math.max(36, Math.min(52, mid * 0.08));
+    var rodW = mid - headLen - gap;
+    var rodX = midL;
+    var headTip = rodX + rodW + gap;
+
+    drawMotorHousing(motorX, motorY, motorW, motorH);
+    dimTick(motorX - 16, motorY + 4, motorX - 16, motorY + motorH - 4, "1.4 m");
+    var motorLabelY = Math.min(motorY + motorH + 20, top + H - 12);
+    leader(motorX + motorW * 0.3, motorY + motorH - 6, motorX + 18, motorLabelY);
+    callout(motorX + 18, motorLabelY, 1, "motor");
+
+    drawDrillRod(rodX, axis, rodW);
+    dimTick(rodX + 8, axis + 16, rodX + rodW - 8, axis + 16, "3 m", true);
+    var rodLabelY = axis - 24;
+    leader(rodX + rodW * 0.28, axis - 5, rodX + 14, rodLabelY);
+    callout(rodX + 14, rodLabelY, 3, "drill rod");
+
+    drawCuttingHead(headTip, axis, headLen);
+    ctx.save();
+    ctx.strokeStyle = MID;
+    ctx.lineWidth = 0.65;
+    ctx.setLineDash([2, 3]);
+    strokeLine(rodX + rodW + 4, axis, headTip - 4, axis);
+    ctx.restore();
+    var headLabelY = axis + headLen * 0.62 + 18;
+    leader(headTip + headLen * 0.7, axis + headLen * 0.2, headTip + 8, headLabelY);
+    callout(headTip + 10, headLabelY, 4, "cutting head");
+
+    var frameX = rodX;
+    var frameY = axis + 40;
+    var frameW = Math.max(80, rodW * 0.92);
+    var frameH = Math.max(56, top + H - frameY - 30);
+    drawRigFrame(frameX, frameY, frameW, frameH);
+    var frameLabelY = Math.min(frameY + frameH + 14, top + H - 10);
+    leader(frameX + frameW * 0.45, frameY + frameH, frameX + 12, frameLabelY);
+    callout(frameX + 12, frameLabelY, 5, "frame");
+
+    drawGearCase(caseX, axis - caseH / 2, caseW, caseH);
+    ink(1.15);
+    gearAt(looseX, axis, gearR, 16);
+    drawCableReel(reelX, axis, reelW, reelH);
+    ctx.save();
+    ctx.strokeStyle = MID;
+    ctx.lineWidth = 0.65;
+    ctx.setLineDash([2, 3]);
+    strokeLine(caseX + caseW + 10, axis, looseX - gearR - 4, axis);
+    strokeLine(looseX + gearR + 4, axis, reelX - 4, axis);
+    ctx.restore();
+    var gearLabelY = axis - caseH / 2 - 18;
+    if (gearLabelY < top + 8) gearLabelY = top + 8;
+    leader(caseX + caseW * 0.45, axis - caseH / 2, caseX + 8, gearLabelY);
+    callout(caseX + 8, gearLabelY, 2, "gearbox");
+    var reelLabelY = axis - reelH / 2 - 18;
+    if (reelLabelY < top + 8) reelLabelY = top + 8;
+    leader(reelX + reelW * 0.55, axis - reelH / 2, reelX + 6, reelLabelY);
+    callout(reelX + 6, reelLabelY, 6, "cable reel");
   }
+
+  function drawMotorHousing(x, y, w, h) {
+    ink(1.15);
+    var baseY = y + h * 0.86;
+    ctx.strokeRect(x, baseY, w, h - (baseY - y));
+    bolt(x + 8, baseY + (y + h - baseY) / 2, 2);
+    bolt(x + w - 8, baseY + (y + h - baseY) / 2, 2);
+    var caseY = y + h * 0.3;
+    var caseH = baseY - caseY;
+    ctx.strokeRect(x + w * 0.05, caseY, w * 0.9, caseH);
+    var rcx = x + w * 0.36;
+    var rcy = caseY + caseH * 0.58;
+    var rr = Math.min(w * 0.16, caseH * 0.32);
+    ctx.beginPath();
+    ctx.arc(rcx, rcy, rr, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(rcx, rcy, rr * 0.3, 0, Math.PI * 2);
+    ctx.stroke();
+    strokeLine(rcx - rr, rcy, rcx + rr, rcy);
+    strokeLine(rcx, rcy - rr, rcx, rcy + rr);
+    strokeLine(x + w * 0.58, caseY, x + w * 0.58, caseY + caseH);
+    gearAt(x + w * 0.75, caseY + caseH * 0.42, Math.min(w * 0.09, caseH * 0.22), 10);
+    var sx = x + w * 0.4;
+    strokeLine(sx - 5, y + h * 0.05, sx - 5, caseY);
+    strokeLine(sx + 5, y + h * 0.05, sx + 5, caseY);
+    var i;
+    var span = caseY - (y + h * 0.1);
+    for (i = 0; i < 6; i++) {
+      var ty = y + h * 0.08 + (span * i) / 5;
+      strokeLine(sx - 5, ty, sx + 5, ty + 3);
+    }
+    ctx.beginPath();
+    ctx.moveTo(sx - 8, y + h * 0.05);
+    ctx.lineTo(sx - 8, y);
+    ctx.lineTo(sx + 8, y);
+    ctx.lineTo(sx + 8, y + h * 0.05);
+    ctx.stroke();
+    ctx.strokeRect(x + w * 0.66, y + h * 0.06, w * 0.14, h * 0.2);
+    strokeLine(x + w * 0.73, y + h * 0.06, x + w * 0.73, caseY);
+    strokeLine(x + w * 0.95, caseY + caseH * 0.3, x + w + 12, caseY + caseH * 0.15);
+    ctx.strokeRect(x + w * 0.62, caseY + 4, w * 0.16, caseH * 0.22);
+  }
+
+  function drawDrillRod(x, y, len) {
+    ink(1.15);
+    var t = 4;
+    strokeLine(x, y - t, x + len, y - t);
+    strokeLine(x, y + t, x + len, y + t);
+    strokeLine(x, y - t, x, y + t);
+    ctx.strokeRect(x + len - 12, y - t - 3, 12, (t + 3) * 2);
+    var n = Math.max(8, Math.floor(len / 16));
+    var i;
+    for (i = 0; i < n; i++) {
+      var xx = x + 10 + i * (len - 28) / (n - 1);
+      strokeLine(xx, y - t, xx + 6, y + t);
+    }
+  }
+
+  function drawCuttingHead(tipX, cy, len) {
+    var faceRx = len * 0.2;
+    var faceRy = len * 0.46;
+    var faceX = tipX + len * 0.7;
+    ink(1.2);
+    strokeLine(tipX, cy - 3, faceX - faceRx * 0.2, cy - faceRy * 0.28);
+    strokeLine(tipX, cy + 3, faceX - faceRx * 0.2, cy + faceRy * 0.28);
+    ctx.beginPath();
+    ctx.moveTo(tipX + len * 0.16, cy - 5);
+    ctx.lineTo(faceX, cy - faceRy);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(tipX + len * 0.16, cy + 5);
+    ctx.lineTo(faceX, cy + faceRy);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(faceX, cy, faceRx, faceRy, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(faceX, cy, faceRx * 0.4, faceRy * 0.32, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    var i;
+    var n = 12;
+    for (i = 0; i < n; i++) {
+      var a = (i / n) * Math.PI * 2;
+      var px = faceX + Math.cos(a) * faceRx;
+      var py = cy + Math.sin(a) * faceRy;
+      var ox = faceX + Math.cos(a) * (faceRx + faceRy * 0.28);
+      var oy = cy + Math.sin(a) * (faceRy + faceRy * 0.16);
+      var tx = -Math.sin(a) * 3.5;
+      var ty = Math.cos(a) * 3.5;
+      ctx.beginPath();
+      ctx.moveTo(px + tx, py + ty);
+      ctx.lineTo(ox, oy);
+      ctx.lineTo(px - tx, py - ty);
+      ctx.stroke();
+    }
+  }
+
+  function drawRigFrame(x, y, w, h) {
+    var dx = Math.min(18, w * 0.06);
+    var dy = -Math.min(12, h * 0.12);
+    ink(1.15);
+    strokeLine(x, y + h, x + w, y + h);
+    strokeLine(x, y, x + w, y);
+    strokeLine(x, y, x, y + h);
+    strokeLine(x + w, y, x + w, y + h);
+    strokeLine(x + w * 0.33, y, x + w * 0.33, y + h);
+    strokeLine(x + w * 0.66, y, x + w * 0.66, y + h);
+    strokeLine(x, y + h * 0.5, x + w, y + h * 0.5);
+    strokeLine(x, y + h, x + w * 0.33, y);
+    strokeLine(x + w * 0.33, y + h, x + w * 0.66, y);
+    strokeLine(x + dx, y + dy, x + w + dx, y + dy);
+    strokeLine(x + dx, y + h + dy, x + w + dx, y + h + dy);
+    strokeLine(x + dx, y + dy, x + dx, y + h + dy);
+    strokeLine(x + w + dx, y + dy, x + w + dx, y + h + dy);
+    strokeLine(x, y, x + dx, y + dy);
+    strokeLine(x + w, y, x + w + dx, y + dy);
+    strokeLine(x, y + h, x + dx, y + h + dy);
+    strokeLine(x + w, y + h, x + w + dx, y + h + dy);
+    bolt(x + 6, y + h - 6, 1.8);
+    bolt(x + w - 6, y + h - 6, 1.8);
+  }
+
+  function drawGearCase(x, y, w, h) {
+    var cx = x + w * 0.4;
+    var cy = y + h * 0.5;
+    var r = Math.min(w, h) * 0.42;
+    ink(1.15);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 6, 0, Math.PI * 2);
+    ctx.stroke();
+    var i;
+    for (i = 0; i < 6; i++) {
+      var a = -Math.PI / 2 + (i / 6) * Math.PI * 2;
+      bolt(cx + Math.cos(a) * (r + 3), cy + Math.sin(a) * (r + 3), 1.6);
+    }
+    gearAt(cx, cy, r * 0.58, 14);
+    strokeLine(cx + r + 6, cy - 3, x + w + 10, cy - 3);
+    strokeLine(cx + r + 6, cy + 3, x + w + 10, cy + 3);
+  }
+
+  function drawCableReel(x, cy, w, h) {
+    var r = h / 2;
+    ink(1.15);
+    ctx.beginPath();
+    ctx.ellipse(x, cy, Math.max(3, r * 0.2), r, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(x + w, cy, Math.max(3, r * 0.2), r, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    strokeLine(x, cy - r, x + w, cy - r);
+    strokeLine(x, cy + r, x + w, cy + r);
+    var drum = r * 0.55;
+    strokeLine(x + r * 0.15, cy - drum, x + w - r * 0.15, cy - drum);
+    strokeLine(x + r * 0.15, cy + drum, x + w - r * 0.15, cy + drum);
+    var i;
+    for (i = 0; i < 6; i++) {
+      var xx = x + r * 0.3 + i * (w - r * 0.6) / 5;
+      ctx.beginPath();
+      ctx.moveTo(xx, cy - drum);
+      ctx.quadraticCurveTo(xx + 4, cy, xx, cy + drum);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(x, cy, Math.max(2, r * 0.14), 0, Math.PI * 2);
+    ctx.stroke();
+    strokeLine(x - 8, cy, x, cy);
+    strokeLine(x + w, cy, x + w + 10, cy);
+  }
+
 
   function drawFps() {
     setFont(14, 500);
