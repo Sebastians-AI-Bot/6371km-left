@@ -183,7 +183,18 @@
 
   function sheetBox() {
     var m = cssW < 720 ? 14 : 22;
-    return { x: m, y: m, w: cssW - m * 2, h: cssH - m * 2 };
+    var right = m + stripGutter();
+    var w = cssW - m - right;
+    if (w < 280) {
+      right = Math.max(m, cssW - m - 280);
+      w = cssW - m - right;
+    }
+    return { x: m, y: m, w: Math.max(80, w), h: cssH - m * 2 };
+  }
+
+  /* Clear of a 30 px tick and the depth label beside it. */
+  function stripGutter() {
+    return 128;
   }
 
   function titleBlock(box) {
@@ -205,12 +216,12 @@
     var top1 = R - worldH;
     var useT = t;
     if (!(top1 > top0) && useT >= 0) useT = 0;
-    var bot0 = top0 + worldH;
-    var bot = bot0 * Math.pow(R / Math.max(bot0, 0.05), useT);
+    var bot0 = OPEN_DEPTH;
+    var bot = bot0 + useT * (R - bot0);
     var top = bot - worldH;
-    if (useT >= 0) top = Math.max(top, top0);
-    if (top1 > top0 && top > top1) top = top1;
-    else if (useT < 0 && top > top1) top = top1;
+    if (!(top1 > top0) && useT >= 0) top = top0;
+    else if (top > top1) top = top1;
+    else if (useT >= 0 && top < top0) top = top0;
     return {
       box: box,
       worldW: worldW,
@@ -225,10 +236,10 @@
     return placedView(worldW, scrollT);
   }
 
-  /* Depth at the bottom of the frame if the strip were dragged to t. */
-  function tickDepth(worldW, t) {
-    var v = placedView(worldW, t);
-    return Math.min(R, Math.max(0, v.top + v.worldH));
+  /* Strip position, linear from the 3 m frame to the centre. */
+  function stripDepth(t) {
+    var tt = clamp(t, 0, 1);
+    return OPEN_DEPTH + tt * (R - OPEN_DEPTH);
   }
 
   function worldToScreen(v, x, y) {
@@ -1418,12 +1429,12 @@
     var y0 = pad;
     var y1 = Math.max(y0 + 40, cssH - pad);
     var n = Math.max(24, Math.round((y1 - y0) / 8) + 1);
-    var maxLen = 41;
+    var maxLen = 30;
     var right = cssW - 10;
     return {
-      x: right - maxLen - 8,
+      x: right - maxLen - 96,
       y: 0,
-      w: maxLen + 18,
+      w: maxLen + 106,
       h: cssH,
       n: n,
       y0: y0,
@@ -1457,13 +1468,13 @@
   function drawTickDepth(g, worldW) {
     if (stripHot < 0) return;
     var t = clamp(stripHot / Math.max(1, g.n - 1), 0, 1);
-    var text = formatTickDepth(tickDepth(worldW, t));
+    var text = formatTickDepth(stripDepth(t));
     var y = g.y0 + (g.y1 - g.y0) * t;
     setFont(13);
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     var tw = ctx.measureText(text).width;
-    var tx = g.right - 52;
+    var tx = g.right - 38;
     ctx.fillStyle = PAPER;
     ctx.fillRect(tx - tw - 5, y - 9, tw + 8, 18);
     ctx.fillStyle = INK;
@@ -1476,8 +1487,8 @@
     var active = Math.max(0, Math.min(g.n - 1, scrollT * (g.n - 1)));
     var center = stripHot >= 0 ? Math.round(stripHot) : Math.round(active);
     var half = liftHalf(worldW, g.n);
-    var rest = 7;
-    var grow = 34;
+    var rest = 15;
+    var grow = 15;
     var i;
     var marks = [];
     for (i = 0; i < g.n; i++) {
@@ -1493,7 +1504,7 @@
       var mark = marks[i];
       var w = mark.w;
       ctx.strokeStyle = w > 0.8 ? INK : w > 0.45 ? MID : w > 0.05 ? FAINT : "#b7c0c8";
-      ctx.lineWidth = w > 0.8 ? 2.4 : w > 0.45 ? 1.75 : w > 0.05 ? 1.25 : 1;
+      ctx.lineWidth = w > 0.8 ? 1.45 : w > 0.45 ? 1.2 : 1;
       ctx.lineCap = "butt";
       ctx.setLineDash([]);
       strokeLine(g.right - mark.len, mark.y, g.right, mark.y);
@@ -1602,11 +1613,8 @@
     var top0 = shallowTop(worldH, box);
     var top1 = R - worldH;
     if (!(top1 > top0)) return 0;
-    var bot0 = top0 + worldH;
     var bot = Math.min(R, top + worldH);
-    var ratio = R / Math.max(bot0, 0.05);
-    if (!(ratio > 1) || !(bot > 0)) return 0;
-    var t = Math.log(Math.max(bot, 1e-9) / bot0) / Math.log(ratio);
+    var t = (bot - OPEN_DEPTH) / (R - OPEN_DEPTH);
     if (!(top1 > top0) && t >= 0) return 0;
     if (t > 1) return 1;
     return t;
