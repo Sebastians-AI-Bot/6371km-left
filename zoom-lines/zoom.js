@@ -201,7 +201,7 @@
 
   function titleBlock(box) {
     var w = Math.min(268, box.w - 24);
-    var h = 168;
+    var h = 184;
     return {
       x: box.x + box.w - w - 10,
       y: box.y + box.h - h - 10,
@@ -1403,6 +1403,74 @@
     ctx.fillText(label, lx, ly);
   }
 
+  /* Dots per inch as the browser reports them. A match of 96 × devicePixelRatio
+     is the CSS inch, not a measurement of the glass. */
+  var knownDpi = 0;
+  var knownDpr = 0;
+
+  function browserDpi() {
+    var real = window.devicePixelRatio || 1;
+    if (knownDpi && knownDpr === real) return knownDpi;
+    knownDpr = real;
+    var cssDpi = 96 * real;
+    var dpi = 0;
+    if (window.matchMedia) {
+      var rounded = Math.round(cssDpi);
+      if (window.matchMedia("(resolution: " + rounded + "dpi)").matches) dpi = rounded;
+      if (!dpi) {
+        var d;
+        for (d = 1; d <= 1000; d++) {
+          if (window.matchMedia("(resolution: " + d + "dpi)").matches) {
+            dpi = d;
+            break;
+          }
+        }
+      }
+    }
+    if (!dpi) dpi = cssDpi;
+    knownDpi = dpi;
+    return dpi;
+  }
+
+  /* Metres across cssPx, using the browser's inch. One number: the CSS inch
+     when that is all the resolution query knows. */
+  function glassMetres(cssPx) {
+    var real = window.devicePixelRatio || 1;
+    var dpi = browserDpi();
+    var inches = Math.abs(dpi - 96 * real) < 0.51 ? cssPx / 96 : (cssPx * real) / dpi;
+    return inches * 0.0254;
+  }
+
+  /* Nearest 1-2-5 step to world metres per metre of glass. */
+  function snapRatio(ratio) {
+    var best = 1;
+    var bestD = Infinity;
+    var base = Math.pow(10, Math.floor(Math.log10(Math.max(ratio, 1e-9))));
+    var e;
+    var i;
+    for (e = -2; e <= 2; e++) {
+      var mag = base * Math.pow(10, e);
+      var steps = [1, 2, 5];
+      for (i = 0; i < steps.length; i++) {
+        var s = steps[i] * mag;
+        var d = Math.abs(Math.log(ratio / s));
+        if (d < bestD) {
+          bestD = d;
+          best = s;
+        }
+      }
+    }
+    return best;
+  }
+
+  function scaleText(worldW, cssPx) {
+    var glass = glassMetres(cssPx);
+    if (!(glass > 0) || !(worldW > 0)) return "1:1";
+    var n = snapRatio(worldW / glass);
+    if (n < 1) return String(Math.round(1 / n)) + ":1";
+    return "1:" + String(Math.round(n));
+  }
+
   function shownDepth(v) {
     var bottom = v.top + v.worldH;
     if (v.top < R && bottom > R && (2 * R) * v.px < Math.min(v.box.w, v.box.h) * 1.25) {
@@ -1445,7 +1513,8 @@
       ["area", "10 m\u00b2"],
       ["radius", "6 371 km"],
       ["window", formatLength(v.worldW)],
-      ["depth", depth.text]
+      ["depth", depth.text],
+      ["scale", scaleText(v.worldW, v.box.w)]
     ];
     var y = tb.y + 66;
     for (var i = 0; i < rows.length; i++) {
@@ -1828,6 +1897,7 @@
         worldW: v.worldW,
         worldH: v.worldH,
         depth: shownDepth(v).text,
+        scale: scaleText(v.worldW, v.box.w),
         top: v.top,
         scroll: scrollT,
         strip: stripGeom
