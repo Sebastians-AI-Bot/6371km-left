@@ -117,8 +117,12 @@
 
   var logW = Math.log10(nearWidth());
   var lock = "near";
-  /* 0 is the opening 3 m frame. 1 is the centre of the Earth. */
+  /* 0 is the shallow frame (the surface on screen). 1 is the centre. */
   var scrollT = 0;
+  /* While a zoom is keeping the core in the middle, this is the view top.
+     Scroll and a crust or soil slice clear it and follow scrollT. */
+  var zoomTop = null;
+  var coreHold = false;
   var pointerY = null;
   var OPEN_DEPTH = 3;
   /* Presented frames, not a tight redraw loop. A bucket of about a tenth
@@ -226,8 +230,12 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  function pageMargin() {
+    return cssW < 720 ? 14 : 22;
+  }
+
   function sheetBox() {
-    var m = cssW < 720 ? 14 : 22;
+    var m = pageMargin();
     var right = m + stripGutter();
     var w = cssW - m - right;
     if (w < 280) {
@@ -237,9 +245,11 @@
     return { x: m, y: m, w: Math.max(80, w), h: cssH - m * 2 };
   }
 
-  /* Clear of a 30 px tick and the depth label beside it. */
+  /* The margin past the ticks matches the left margin. Between the drawing
+     and the ticks is the same gap again, so the strip does not cover the
+     sheet. 30 px is the fully raised tick. 6 px is the frame outside the box. */
   function stripGutter() {
-    return 128;
+    return 30 + pageMargin() + 6;
   }
 
   function titleBlock(box) {
@@ -253,6 +263,16 @@
     };
   }
 
+  /* View bottom when the surface sits one third down. At the opening zoom
+     this is 3 m. Zoomed in closer it is shallower, so the surface can
+     still be brought on screen. */
+  function shallowBottom(worldH, box) {
+    var bot = shallowTop(worldH, box) + worldH;
+    if (bot < 0) bot = 0;
+    if (bot > R) bot = R;
+    return bot;
+  }
+
   function placedView(worldW, t) {
     var box = sheetBox();
     var aspect = box.w / Math.max(1, box.h);
@@ -261,19 +281,23 @@
     var top1 = R - worldH;
     var useT = t;
     if (!(top1 > top0) && useT >= 0) useT = 0;
-    var bot0 = OPEN_DEPTH;
+    var bot0 = shallowBottom(worldH, box);
     var bot = bot0 + useT * (R - bot0);
     var top = bot - worldH;
     if (!(top1 > top0) && useT >= 0) top = top0;
     else if (top > top1) top = top1;
     else if (useT >= 0 && top < top0) top = top0;
-    /* Once the disk fits, ease the horizon pin toward a centred globe.
-       Fully zoomed out, the core sits on the middle of the screen. */
-    var farH = farWidth(aspect) / aspect;
-    if (worldH >= 2 * R && farH > 2 * R) {
-      var u = clamp((worldH - 2 * R) / (farH - 2 * R), 0, 1);
-      u = u * u * (3 - 2 * u);
-      top = lerp(top, R - worldH / 2, u);
+    if (coreHold && zoomTop != null) {
+      top = zoomTop;
+    } else {
+      /* Zooming out eases the horizon pin toward a centred globe.
+         Fully zoomed out, the core sits on the middle of the screen. */
+      var farH = farWidth(aspect) / aspect;
+      if (worldH >= 2 * R && farH > 2 * R) {
+        var u = clamp((worldH - 2 * R) / (farH - 2 * R), 0, 1);
+        u = u * u * (3 - 2 * u);
+        top = lerp(top, R - worldH / 2, u);
+      }
     }
     return {
       box: box,
@@ -289,10 +313,13 @@
     return placedView(worldW, scrollT);
   }
 
-  /* Strip position, linear from the 3 m frame to the centre. */
+  /* Strip position, linear in metres from the shallow frame to the centre. */
   function stripDepth(t) {
+    var box = sheetBox();
+    var aspect = box.w / Math.max(1, box.h);
+    var bot0 = shallowBottom(currentWorldW() / aspect, box);
     var tt = clamp(t, 0, 1);
-    return OPEN_DEPTH + tt * (R - OPEN_DEPTH);
+    return bot0 + tt * (R - bot0);
   }
 
   function worldToScreen(v, x, y) {
@@ -1232,6 +1259,42 @@
     }
   }
 
+  /* Thickness of each rock unit. Outside the patch when the margin can
+     hold it, otherwise inside that band at the side. Nothing on the globe,
+     and nothing on a band too thin to read. */
+  function drawLayerDims(v, tb) {
+    if (globeInView(v.worldW)) return;
+    var place = layerDimPlace(v);
+    if (!place) return;
+    var from = 0;
+    var i;
+    setFont(12);
+    for (i = 0; i < COLUMN.length; i++) {
+      var unit = COLUMN[i];
+      var y0 = worldToScreen(v, 0, from).y;
+      var y1 = worldToScreen(v, 0, unit.to).y;
+      var label = formatLength(unit.to - from);
+      var need = ctx.measureText(label).width + 8;
+      if (y0 >= v.box.y - 1 && y1 <= v.box.y + v.box.h + 1 && y1 - y0 >= Math.max(34, need)) {
+        dimVertical(v, place.x, from, unit.to, label, place.offset, tb);
+      }
+      from = unit.to;
+    }
+  }
+
+  function layerDimPlace(v) {
+    var edge = PATCH / 2;
+    var leftPx = worldToScreen(v, -edge, 0).x;
+    var rightPx = worldToScreen(v, edge, 0).x;
+    var roomL = leftPx - v.box.x;
+    var roomR = v.box.x + v.box.w - rightPx;
+    if (roomL >= 56) return { x: -edge, offset: -30 };
+    if (roomR >= 72) return { x: edge, offset: 30 };
+    var sx = v.box.x + 44;
+    var wx = v.left + (sx - v.box.x) / v.px;
+    return { x: wx, offset: 16 };
+  }
+
   function niceStep(pxPerM) {
     var raw = 64 / Math.max(pxPerM, 1e-15);
     var pow = Math.pow(10, Math.floor(Math.log10(raw)));
@@ -1690,12 +1753,13 @@
   }
 
   function drawMoon(x, y, s) {
-    var cx = x + s * 0.46;
-    var cy = y + s * 0.5;
-    var r = s * 0.40;
+    var cx = x + s / 2;
+    var cy = y + s / 2;
+    var r = s * 0.44;
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2, false);
-    ctx.arc(cx + r * 0.48, cy - r * 0.08, r * 0.80, 0, Math.PI * 2, true);
+    ctx.arc(cx, cy, r, 0.65, Math.PI * 2 - 0.65, false);
+    ctx.arc(cx + r * 0.62, cy, r * 0.78, Math.PI * 2 - 0.42, 0.42, true);
+    ctx.closePath();
     ctx.fill();
   }
 
@@ -1743,7 +1807,7 @@
     var y1 = Math.max(y0 + 40, cssH - pad);
     var n = Math.max(24, Math.round((y1 - y0) / 8) + 1);
     var maxLen = 30;
-    var right = cssW - 10;
+    var right = cssW - pageMargin();
     return {
       x: right - maxLen - 96,
       y: 0,
@@ -1846,21 +1910,28 @@
   function scrollFromPointer(y) {
     var g = stripGeom;
     if (!g) return;
+    zoomTop = null;
+    coreHold = false;
     scrollT = clamp((y - g.y0) / Math.max(1, g.y1 - g.y0), 0, 1);
   }
 
   /* Alt-wheel scrolls by a fifth of the depth in the window. One notch
-     (deltaY 100) is that far up or down. The 3 m frame and the centre stay
-     the stops. Strip drag is still linear in depth. */
+     (deltaY 100) is that far up or down. The shallow stop is the surface
+     on screen. The deep stop is the centre. Strip drag stays linear. */
   function scrollByWheel(dy) {
     var v = viewOf(currentWorldW());
-    var bottom = Math.min(R, v.top + v.worldH);
+    var bottom = v.top + v.worldH;
     var origin = Math.max(0, v.top);
-    var height = bottom - origin;
+    var limit = Math.min(R, bottom);
+    var height = limit - origin;
     if (!(height > 1e-6)) height = v.worldH;
     var metres = (dy / 100) * (height / 5);
-    var next = clamp(bottom + metres, OPEN_DEPTH, R);
-    scrollT = (next - OPEN_DEPTH) / (R - OPEN_DEPTH);
+    var minBot = shallowBottom(v.worldH, v.box);
+    var next = clamp(bottom + metres, minBot, R);
+    var span = R - minBot;
+    zoomTop = null;
+    coreHold = false;
+    scrollT = span > 1 ? (next - minBot) / span : 0;
     wheelLift = true;
   }
 
@@ -1902,6 +1973,7 @@
     drawPitAndSurfaceCut(v);
     drawCenterlines(v);
     drawPatchDims(v, tb);
+    drawLayerDims(v, tb);
     drawDepthScale(v, tb);
     drawRadiusDim(v, tb);
     drawLocator(v, tb);
@@ -1925,9 +1997,20 @@
     return clamp(Math.pow(10, logW), closeWidth(), farWidth(aspect));
   }
 
-  /* Wheel zoom is vertical only, about the depth under the pointer.
-     The shallow stop is the opening frame (horizon at one third).
-     The deep stop is the centre of the Earth. */
+  /* The core is already in the middle, and the window is still taller than
+     a crust slice. Pointer zoom returns once the view is crust or soil. */
+  function coreIsSubject(v) {
+    if (v.worldH < 80000) return false;
+    var coreY = v.box.y + (R - v.top) * v.px;
+    var mid = v.box.y + v.box.h / 2;
+    return Math.abs(coreY - mid) <= v.box.h * 0.16;
+  }
+
+  /* Wheel zoom is vertical only. While the core is the picture, the zoom
+     is about the screen centre so the core stays put. On a crust or soil
+     slice it is about the depth under the pointer again. The horizon stays
+     one third down when the pointer is on the surface. The deep stop of a
+     slice is the centre. */
   function zoomAt(dy, screenY) {
     var before = viewOf(currentWorldW());
     var depth = before.top + (screenY - before.box.y) / before.px;
@@ -1939,11 +2022,20 @@
     var worldH = worldW / aspect;
     var top0 = shallowTop(worldH, before.box);
     var top1 = R - worldH;
-    var top = top0;
-    if (depth > 0) {
+    var lookPast = before.top + before.worldH > R + 0.5;
+    var top;
+    if (coreIsSubject(before)) {
+      coreHold = true;
+      top = R - worldH / 2;
+    } else if (!(depth > 0)) {
+      coreHold = false;
+      top = top0;
+    } else {
+      coreHold = false;
       top = depth - (screenY - before.box.y) * worldH / before.box.h;
-      if (top > top1) top = top1;
+      if (!lookPast && top > top1) top = top1;
     }
+    zoomTop = top;
     scrollT = scrollForTop(worldW, top);
   }
 
@@ -1951,12 +2043,11 @@
     var box = sheetBox();
     var aspect = box.w / Math.max(1, box.h);
     var worldH = worldW / aspect;
-    var top0 = shallowTop(worldH, box);
-    var top1 = R - worldH;
-    if (!(top1 > top0)) return 0;
+    var bot0 = shallowBottom(worldH, box);
+    var span = R - bot0;
+    if (!(span > 1)) return 0;
     var bot = Math.min(R, top + worldH);
-    var t = (bot - OPEN_DEPTH) / (R - OPEN_DEPTH);
-    if (!(top1 > top0) && t >= 0) return 0;
+    var t = (bot - bot0) / span;
     if (t > 1) return 1;
     return t;
   }
@@ -1967,6 +2058,8 @@
     else if (name === "globe" || name === "3") lock = "globe";
     else return false;
     scrollT = 0;
+    zoomTop = null;
+    coreHold = false;
     return true;
   }
 
