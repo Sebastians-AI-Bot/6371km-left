@@ -1471,6 +1471,98 @@
     return "1:" + String(Math.round(n));
   }
 
+  function formatRawRatio(n) {
+    if (!(n > 0) || !isFinite(n)) return "—";
+    if (n >= 1000) return groupInt(n);
+    if (n >= 10) return trimNum(n.toFixed(1));
+    return trimNum(n.toFixed(2));
+  }
+
+  /* Values the drawing already reads. Nothing here is measured twice. */
+  function debugRows(v) {
+    var glass = glassMetres(v.box.w);
+    var raw = glass > 0 ? v.worldW / glass : 0;
+    var zoom = trimNum(logW.toFixed(3));
+    if (lock) zoom += "  " + lock;
+    return [
+      ["screen", cssW + " \u00d7 " + cssH + " px"],
+      ["dpi", String(Math.round(browserDpi()))],
+      ["glass", trimNum(glass.toFixed(3)) + " m"],
+      ["width", formatLength(v.worldW)],
+      ["depth", shownDepth(v).text],
+      ["scale", formatRawRatio(raw) + " \u2192 " + scaleText(v.worldW, v.box.w)],
+      ["zoom", zoom],
+      ["scroll", formatTickDepth(stripDepth(clamp(scrollT, 0, 1)))],
+      ["fps", fpsLabel]
+    ];
+  }
+
+  var debugOpen = true;
+  var debugHit = null;
+
+  function drawDebug(v) {
+    var rows = debugOpen ? debugRows(v) : [];
+    ctx.save();
+    setFont(12, 500);
+    var header = "debug";
+    var maxW = ctx.measureText(header).width;
+    setFont(12);
+    var i;
+    for (i = 0; i < rows.length; i++) {
+      var pair = ctx.measureText(rows[i][0]).width + ctx.measureText(rows[i][1]).width + 18;
+      if (pair > maxW) maxW = pair;
+    }
+    var pad = 8;
+    var headH = 22;
+    var rowH = 16;
+    var w = Math.ceil(maxW + pad * 2);
+    var h = debugOpen ? headH + 4 + rows.length * rowH + 4 : headH;
+    var x = 10;
+    var y = 42;
+    debugHit = { x: x, y: y, w: w, h: headH };
+
+    ctx.fillStyle = PAPER;
+    ctx.strokeStyle = MID;
+    ctx.lineWidth = 0.8;
+    ctx.setLineDash([]);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+
+    ctx.fillStyle = INK;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    setFont(12, 500);
+    ctx.fillText(header, x + pad, y + headH / 2);
+    if (!debugOpen) {
+      ctx.restore();
+      return;
+    }
+    ctx.strokeStyle = MID;
+    ctx.beginPath();
+    ctx.moveTo(x, y + headH);
+    ctx.lineTo(x + w, y + headH);
+    ctx.stroke();
+
+    var yy = y + headH + 12;
+    for (i = 0; i < rows.length; i++) {
+      setFont(12);
+      ctx.fillStyle = FAINT;
+      ctx.textAlign = "left";
+      ctx.fillText(rows[i][0], x + pad, yy);
+      ctx.fillStyle = INK;
+      ctx.textAlign = "right";
+      ctx.fillText(rows[i][1], x + w - pad, yy);
+      yy += rowH;
+    }
+    ctx.restore();
+  }
+
+  function pointerOnDebug(x, y) {
+    var g = debugHit;
+    if (!g) return false;
+    return x >= g.x && x <= g.x + g.w && y >= g.y && y <= g.y + g.h;
+  }
+
   function shownDepth(v) {
     var bottom = v.top + v.worldH;
     if (v.top < R && bottom > R && (2 * R) * v.px < Math.min(v.box.w, v.box.h) * 1.25) {
@@ -1721,6 +1813,7 @@
     drawFrame(v, tb);
     drawScrollStrip(worldW);
     drawFps();
+    drawDebug(v);
   }
 
   function zoomBy(dy) {
@@ -1839,6 +1932,10 @@
       if (stripGeom) stripHot = stripIndexAt(stripGeom, p.y);
       return;
     }
+    if (pointerOnDebug(p.x, p.y)) {
+      canvas.style.cursor = "pointer";
+      return;
+    }
     if (pointerOnStrip(p.x, p.y)) {
       stripHot = stripIndexAt(stripGeom, p.y);
       canvas.style.cursor = "ns-resize";
@@ -1851,6 +1948,11 @@
   window.addEventListener("mousedown", function (event) {
     if (event.button !== 0) return;
     var p = pointerXY(event);
+    if (pointerOnDebug(p.x, p.y)) {
+      debugOpen = !debugOpen;
+      event.preventDefault();
+      return;
+    }
     if (!pointerOnStrip(p.x, p.y)) return;
     stripDrag = true;
     scrollFromPointer(p.y);
