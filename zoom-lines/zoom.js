@@ -175,6 +175,7 @@
       canvas.width = bw;
       canvas.height = bh;
       patternCache = {};
+      patternCount = 0;
     }
     canvas.style.width = cssW + "px";
     canvas.style.height = cssH + "px";
@@ -222,6 +223,14 @@
     if (!(top1 > top0) && useT >= 0) top = top0;
     else if (top > top1) top = top1;
     else if (useT >= 0 && top < top0) top = top0;
+    /* Once the disk fits, ease the horizon pin toward a centred globe.
+       Fully zoomed out, the core sits on the middle of the screen. */
+    var farH = farWidth(aspect) / aspect;
+    if (worldH >= 2 * R && farH > 2 * R) {
+      var u = clamp((worldH - 2 * R) / (farH - 2 * R), 0, 1);
+      u = u * u * (3 - 2 * u);
+      top = lerp(top, R - worldH / 2, u);
+    }
     return {
       box: box,
       worldW: worldW,
@@ -282,6 +291,18 @@
     var px = radius * v.px;
     var c = worldToScreen(v, 0, R);
     var far = px > 120000 || c.y > v.box.y + v.box.h + px;
+    if (far) {
+      var xLeft = v.left;
+      var xRight = v.left + v.worldW;
+      var spanL = radius * radius - xLeft * xLeft;
+      var spanR = radius * radius - xRight * xRight;
+      if (spanL <= 0 || spanR <= 0) return;
+      var yL = R - Math.sqrt(spanL);
+      var yR = R - Math.sqrt(spanR);
+      var view0 = v.top - v.worldH;
+      var view1 = v.top + v.worldH * 2;
+      if (Math.max(yL, yR) < view0 || Math.min(yL, yR) > view1) return;
+    }
     if (!far) {
       ctx.beginPath();
       ctx.arc(c.x, c.y, px, 0, Math.PI * 2);
@@ -407,6 +428,19 @@
   /* Hatches stay inside the earth. A huge radius is drawn as the surface
      arc across the view; the disk itself is used once it fits. */
   function clipBelowSurface(v) {
+    var ySurf = depthY(0, 0);
+    var view0 = v.top;
+    var view1 = v.top + v.worldH;
+    if (ySurf > view1 + v.worldH * 0.05) {
+      ctx.beginPath();
+      ctx.rect(0, 0, 0, 0);
+      ctx.clip();
+      return;
+    }
+    /* A close view of deep ground is entirely below the surface. A clip
+       that reaches up to the surface carries coordinates of billions of
+       pixels and the rasteriser drops frames. The sheet clip is enough. */
+    if (ySurf < view0 - 0.5 && R * v.px >= 800000) return;
     var c = worldToScreen(v, 0, R);
     var rad = R * v.px;
     ctx.beginPath();
@@ -494,7 +528,7 @@
   }
 
   var patternCache = {};
-  var patternZoomKey = "";
+  var patternCount = 0;
 
   /* Repeat step, and the smallest drawn mark, in CSS pixels at the surface. */
   var STEP = {
@@ -533,30 +567,33 @@
     return Math.round(scale * 32) / 32;
   }
 
-  /* One tile per hatch and scale, painted once and repeated. Geometry is
-     scaled; the stroke stays a hairline. The destination is scaled by dpr,
-     and the tile is already dpr pixels per CSS pixel, so the pattern
-     transform cancels that second scale. */
+  /* One tile per hatch and scale, painted once and repeated. The cell is
+     rounded to whole CSS pixels. A fractional cell makes the browser repeat
+     the tile on a slow path, and a close view of one layer then misses
+     frames. Geometry is scaled; the stroke stays a hairline. */
   function fillPattern(box, key, w, h, paint) {
     if (box.w < 1 || box.h < 1) return;
     var scale = patternScale(key);
-    if (patternZoomKey !== String(hatchZoom)) {
-      patternCache = {};
-      patternZoomKey = String(hatchZoom);
-    }
-    var id = key + "@" + dpr + "@" + scale;
+    var tw = Math.max(2, Math.round(w * scale));
+    var th = Math.max(2, Math.round(h * scale));
+    var id = key + "@" + dpr + "@" + tw + "x" + th;
     var pat = patternCache[id];
     if (!pat) {
+      if (patternCount > 160) {
+        patternCache = {};
+        patternCount = 0;
+      }
+      patternCount += 1;
       var tile = document.createElement("canvas");
-      var pw = Math.max(1, Math.round(w * scale * dpr));
-      var ph = Math.max(1, Math.round(h * scale * dpr));
-      tile.width = pw;
-      tile.height = ph;
+      tile.width = tw * dpr;
+      tile.height = th * dpr;
       var g = tile.getContext("2d");
-      g.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+      var sx = tw / w;
+      var sy = th / h;
+      g.setTransform(dpr * sx, 0, 0, dpr * sy, 0, 0);
       g.strokeStyle = HATCH;
       g.fillStyle = HATCH;
-      g.lineWidth = 0.75 / scale;
+      g.lineWidth = 0.75 / sx;
       g.lineCap = "round";
       g.lineJoin = "round";
       paint(g, w, h);
@@ -564,10 +601,19 @@
       pat.setTransform(new DOMMatrix().scale(1 / dpr, 1 / dpr));
       patternCache[id] = pat;
     }
+    /* Phase of the surface, folded into one cell and snapped to a device
+       pixel. A fractional offset makes the repeat resample every pixel,
+       which is what drops a close view of a full layer below the display rate. */
+    var ox = hatchAnchor.x % tw;
+    var oy = hatchAnchor.y % th;
+    if (ox < 0) ox += tw;
+    if (oy < 0) oy += th;
+    ox = Math.round(ox * dpr) / dpr;
+    oy = Math.round(oy * dpr) / dpr;
     ctx.save();
-    ctx.translate(hatchAnchor.x, hatchAnchor.y);
+    ctx.translate(ox, oy);
     ctx.fillStyle = pat;
-    ctx.fillRect(box.x - hatchAnchor.x, box.y - hatchAnchor.y, box.w, box.h);
+    ctx.fillRect(box.x - ox, box.y - oy, box.w, box.h);
     ctx.restore();
   }
 
@@ -1187,11 +1233,16 @@
       labels.push({ y: y, text: text, depth: depth, named: !!named });
     }
 
-    var d;
-    for (d = 0; d <= bottomWorld + step * 0.5; d += step) {
+    /* Only the ticks that fall inside the view. Walking from the surface
+       made a close, deep slice visit millions of off-screen marks. */
+    var d = Math.max(0, Math.ceil((Math.max(0, v.top) / step) - 1e-6)) * step;
+    var limit = bottomWorld + step * 0.5;
+    var guard = 0;
+    var majorSteps = Math.max(1, Math.round(major / step));
+    for (; d <= limit && guard < 500; d += step, guard++) {
       var y = worldToScreen(v, 0, d).y;
-      if (y < v.box.y || y > v.box.y + v.box.h) continue;
-      var isMajor = Math.abs(d / major - Math.round(d / major)) < 1e-6;
+      if (y < v.box.y - 2 || y > v.box.y + v.box.h + 2) continue;
+      var isMajor = Math.round(d / step) % majorSteps === 0;
       ctx.strokeStyle = isMajor ? MID : HAIR;
       ctx.lineWidth = isMajor ? 0.9 : 0.6;
       var len = isMajor ? 8 : 4;
@@ -1447,15 +1498,26 @@
     return clamp((y - g.y0) / Math.max(1, g.y1 - g.y0), 0, 1) * (g.n - 1);
   }
 
+  /* The round earth essentially fits in the sheet. */
+  function globeInView(worldW) {
+    var box = sheetBox();
+    var px = box.w / Math.max(worldW, 1e-9);
+    return (2 * R) * px < Math.min(box.w, box.h) * 1.35;
+  }
+
   /* How many ticks, either side of the pointer, leave the short rest.
      Zoomed in, only the tick under the pointer. Zoomed out to the globe,
-     the whole strip. Halfway along the log zoom, about half the ticks. */
+     the whole strip. Halfway along the log zoom, about half the ticks.
+     Once the globe is in view the half stays wide enough that every tick
+     is raised, even when the active tick sits at one end of the strip. */
   function liftHalf(worldW, n) {
     var aspect = sheetBox().w / Math.max(1, sheetBox().h);
     var log0 = Math.log(closeWidth());
     var log1 = Math.log(farWidth(aspect));
     var t = clamp((Math.log(Math.max(worldW, closeWidth())) - log0) / Math.max(1e-6, log1 - log0), 0, 1);
-    return 0.72 + (n * 0.95 - 0.72) * Math.pow(t, 1.6);
+    var curved = 0.72 + (n * 0.95 - 0.72) * Math.pow(t, 1.6);
+    if (globeInView(worldW)) return Math.max(curved, n * 1.35);
+    return curved;
   }
 
   function dockWeight(dist, half) {
