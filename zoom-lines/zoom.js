@@ -75,6 +75,7 @@
   var lock = "near";
   /* 0 is the opening 3 m frame. 1 is the centre of the Earth. */
   var scrollT = 0;
+  var pointerY = null;
   var OPEN_DEPTH = 3;
   /* Presented frames, not a tight redraw loop. A bucket of about a tenth
      of a second: frames in the bucket divided by the time those frames spanned. */
@@ -99,9 +100,8 @@
     return 2.75 * R * Math.max(aspect, 1);
   }
 
-  /* Sky above the surface, as a fraction of the sheet, so the horizon
-     sits one third of the way down the screen. Zoom changes the scale,
-     not this fraction. */
+  /* At the shallow stop the horizon sits one third of the way down the
+     screen. Zooming on a deeper point keeps that depth still instead. */
   function skyFraction(box) {
     var fromTop = cssH / 3 - box.y;
     return clamp(fromTop / Math.max(1, box.h), 0.08, 0.8);
@@ -203,12 +203,14 @@
     var worldH = worldW / aspect;
     var top0 = shallowTop(worldH, box);
     var top1 = R - worldH;
-    var top = top0;
-    if (top1 > top0) {
-      var bot0 = top0 + worldH;
-      var bot = bot0 * Math.pow(R / Math.max(bot0, 0.05), clamp(t, 0, 1));
-      top = clamp(bot - worldH, top0, top1);
-    }
+    var useT = t;
+    if (!(top1 > top0) && useT >= 0) useT = 0;
+    var bot0 = top0 + worldH;
+    var bot = bot0 * Math.pow(R / Math.max(bot0, 0.05), useT);
+    var top = bot - worldH;
+    if (useT >= 0) top = Math.max(top, top0);
+    if (top1 > top0 && top > top1) top = top1;
+    else if (useT < 0 && top > top1) top = top1;
     return {
       box: box,
       worldW: worldW,
@@ -1471,7 +1473,7 @@
   function drawScrollStrip(worldW) {
     var g = scrollStripGeom();
     stripGeom = g;
-    var active = scrollT * (g.n - 1);
+    var active = Math.max(0, Math.min(g.n - 1, scrollT * (g.n - 1)));
     var center = stripHot >= 0 ? Math.round(stripHot) : Math.round(active);
     var half = liftHalf(worldW, g.n);
     var rest = 7;
@@ -1560,8 +1562,54 @@
   }
 
   function zoomBy(dy) {
+    var y = pointerY == null ? cssH / 3 : pointerY;
+    zoomAt(dy, y);
+  }
+
+  function currentWorldW() {
+    var aspect = sheetBox().w / Math.max(1, sheetBox().h);
+    var forced = widthForLock(aspect);
+    if (forced !== null) return forced;
+    return clamp(Math.pow(10, logW), closeWidth(), farWidth(aspect));
+  }
+
+  /* Wheel zoom is vertical only, about the depth under the pointer.
+     The shallow stop is the opening frame (horizon at one third).
+     The deep stop is the centre of the Earth. */
+  function zoomAt(dy, screenY) {
+    var before = viewOf(currentWorldW());
+    var depth = before.top + (screenY - before.box.y) / before.px;
     lock = null;
     logW += dy * 0.00115;
+    var aspect = before.box.w / Math.max(1, before.box.h);
+    var worldW = clamp(Math.pow(10, logW), closeWidth(), farWidth(aspect));
+    logW = Math.log10(worldW);
+    var worldH = worldW / aspect;
+    var top0 = shallowTop(worldH, before.box);
+    var top1 = R - worldH;
+    var top = top0;
+    if (depth > 0) {
+      top = depth - (screenY - before.box.y) * worldH / before.box.h;
+      if (top > top1) top = top1;
+    }
+    scrollT = scrollForTop(worldW, top);
+  }
+
+  function scrollForTop(worldW, top) {
+    var box = sheetBox();
+    var aspect = box.w / Math.max(1, box.h);
+    var worldH = worldW / aspect;
+    var top0 = shallowTop(worldH, box);
+    var top1 = R - worldH;
+    if (!(top1 > top0)) return 0;
+    var bot0 = top0 + worldH;
+    var bot = Math.min(R, top + worldH);
+    var ratio = R / Math.max(bot0, 0.05);
+    if (!(ratio > 1) || !(bot > 0)) return 0;
+    var t = Math.log(Math.max(bot, 1e-9) / bot0) / Math.log(ratio);
+    if (!(top1 > top0) && t >= 0) return 0;
+    if (t > 1) return 1;
+    return t;
   }
 
   function applyPreset(name) {
@@ -1615,6 +1663,7 @@
     var dy = event.deltaY;
     if (event.deltaMode === 1) dy *= 16;
     else if (event.deltaMode === 2) dy *= 400;
+    pointerY = event.clientY;
     zoomBy(dy);
   }, { passive: false });
 
@@ -1624,6 +1673,7 @@
 
   window.addEventListener("mousemove", function (event) {
     var p = pointerXY(event);
+    pointerY = p.y;
     if (stripDrag) {
       scrollFromPointer(p.y);
       if (stripGeom) stripHot = stripIndexAt(stripGeom, p.y);
