@@ -73,6 +73,9 @@
 
   var logW = Math.log10(nearWidth());
   var lock = "near";
+  var frameTimes = [];
+  var fpsLabel = "— fps";
+  var holdFps = false;
 
   function nearWidth() {
     return PATCH / 0.4;
@@ -124,8 +127,13 @@
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     cssW = Math.max(1, window.innerWidth);
     cssH = Math.max(1, window.innerHeight);
-    canvas.width = Math.round(cssW * dpr);
-    canvas.height = Math.round(cssH * dpr);
+    var bw = Math.round(cssW * dpr);
+    var bh = Math.round(cssH * dpr);
+    if (canvas.width !== bw || canvas.height !== bh) {
+      canvas.width = bw;
+      canvas.height = bh;
+      patternCache = {};
+    }
     canvas.style.width = cssW + "px";
     canvas.style.height = cssH + "px";
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -394,56 +402,100 @@
     ctx.setLineDash([]);
   }
 
-  function horizontals(box, spacing, dash) {
-    ctx.setLineDash(dash || []);
-    var y0 = Math.floor(box.y / spacing) * spacing;
-    for (var y = y0; y < box.y + box.h + spacing; y += spacing) {
-      strokeLine(box.x - 4, y, box.x + box.w + 4, y);
+  var patternCache = {};
+
+  /* One tile per hatch, painted once and repeated. The destination is
+     scaled by dpr, and the tile is already dpr pixels per CSS pixel,
+     so the pattern transform cancels that second scale. */
+  function fillPattern(box, key, w, h, paint) {
+    if (box.w < 1 || box.h < 1) return;
+    var id = key + "@" + dpr;
+    var pat = patternCache[id];
+    if (!pat) {
+      var tile = document.createElement("canvas");
+      var pw = Math.max(1, Math.round(w * dpr));
+      var ph = Math.max(1, Math.round(h * dpr));
+      tile.width = pw;
+      tile.height = ph;
+      var g = tile.getContext("2d");
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.strokeStyle = HATCH;
+      g.fillStyle = HATCH;
+      g.lineWidth = 0.75;
+      g.lineCap = "round";
+      g.lineJoin = "round";
+      paint(g, w, h);
+      pat = ctx.createPattern(tile, "repeat");
+      pat.setTransform(new DOMMatrix().scale(1 / dpr, 1 / dpr));
+      patternCache[id] = pat;
     }
-    ctx.setLineDash([]);
+    ctx.fillStyle = pat;
+    ctx.fillRect(box.x, box.y, box.w, box.h);
   }
 
-  function waves(box, spacing, amp, freq, dash, yShift) {
-    ctx.setLineDash(dash || []);
-    var y0 = Math.floor(box.y / spacing) * spacing + (yShift || 0);
-    var steps = Math.max(12, Math.ceil((box.w + 12) / 7));
-    for (var y = y0; y < box.y + box.h + spacing; y += spacing) {
-      ctx.beginPath();
+  function stamp(g, w, h, places, drawOne) {
+    g.save();
+    g.beginPath();
+    g.rect(0, 0, w, h);
+    g.clip();
+    for (var j = -1; j <= 1; j++) {
+      for (var i = -1; i <= 1; i++) {
+        for (var p = 0; p < places.length; p++) {
+          drawOne(
+          g,
+          places[p][0] + i * w,
+          places[p][1] + j * h,
+          places[p][0],
+          places[p][1]
+        );
+        }
+      }
+    }
+    g.restore();
+  }
+
+  function lattice(step, n) {
+    var places = [];
+    var span = n * step;
+    for (var row = 0; row < n; row++) {
+      var shift = (row % 2) ? step * 0.5 : 0;
+      for (var col = 0; col < n; col++) {
+        var x = col * step + shift;
+        if (x >= span - 0.01) x -= span;
+        places.push([x, row * step]);
+      }
+    }
+    return places;
+  }
+
+  function paintRuled(g, w, h, dash) {
+    g.save();
+    g.lineCap = "butt";
+    g.setLineDash(dash || []);
+    g.beginPath();
+    g.moveTo(0, h / 2);
+    g.lineTo(w, h / 2);
+    g.stroke();
+    g.restore();
+  }
+
+  function paintWave(g, w, h, amp, freq, dash, yShift) {
+    g.save();
+    g.lineCap = "butt";
+    g.setLineDash(dash || []);
+    var steps = Math.max(8, Math.ceil(w / 3));
+    for (var k = -1; k <= 1; k++) {
+      var y0 = h / 2 + (yShift || 0) + k * h;
+      g.beginPath();
       for (var i = 0; i <= steps; i++) {
-        var x = box.x - 6 + (box.w + 12) * (i / steps);
-        var yy = y + Math.sin(x * freq) * amp;
-        if (i === 0) ctx.moveTo(x, yy);
-        else ctx.lineTo(x, yy);
+        var x = (w * i) / steps;
+        var y = y0 + Math.sin(x * freq) * amp;
+        if (i === 0) g.moveTo(x, y);
+        else g.lineTo(x, y);
       }
-      ctx.stroke();
+      g.stroke();
     }
-    ctx.setLineDash([]);
-  }
-
-  function dots(box, step, r) {
-    var x0 = Math.floor(box.x / step) * step;
-    var y0 = Math.floor(box.y / step) * step;
-    var row = 0;
-    for (var y = y0; y < box.y + box.h + step; y += step) {
-      var shift = (row % 2) * step * 0.5;
-      for (var x = x0; x < box.x + box.w + step; x += step) {
-        ctx.beginPath();
-        ctx.arc(x + shift, y, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      row++;
-    }
-  }
-
-  function scatter(box, step, draw) {
-    var x0 = Math.floor(box.x / step) * step;
-    var y0 = Math.floor(box.y / step) * step;
-    var row = 0;
-    for (var y = y0; y < box.y + box.h + step; y += step) {
-      var shift = (row % 2) * step * 0.5;
-      for (var x = x0 - step; x < box.x + box.w + step; x += step) draw(x + shift, y);
-      row++;
-    }
+    g.restore();
   }
 
   function unitHash(x, y) {
@@ -451,150 +503,223 @@
     return n - Math.floor(n);
   }
 
+  function paintRoot(g, x, y, ox, oy) {
+    var hv = unitHash(Math.round(ox), Math.round(oy));
+    var s = 0.8 + hv * 0.45;
+    x += (hv - 0.5) * 8;
+    y += (unitHash(Math.round(oy), Math.round(ox)) - 0.5) * 4;
+    g.beginPath();
+    g.moveTo(x, y - 2 * s);
+    g.lineTo(x, y + 3 * s);
+    g.moveTo(x, y);
+    g.lineTo(x - 4.2 * s, y + 3.4 * s);
+    g.moveTo(x, y + 0.6 * s);
+    g.lineTo(x + 3.6 * s, y + 3.6 * s);
+    g.moveTo(x, y - 0.4 * s);
+    g.lineTo(x - 3.2 * s, y - 2.6 * s);
+    g.stroke();
+  }
+
+  function paintGravel(g, x, y, ox, oy) {
+    var hv = unitHash(Math.round(ox), Math.round(oy));
+    var jx = (hv - 0.5) * 8;
+    var jy = (unitHash(Math.round(oy), Math.round(ox)) - 0.5) * 6;
+    g.beginPath();
+    g.ellipse(x + jx, y + jy, 2.4 + hv * 2.2, 1.7 + (1 - hv) * 1.5, (hv - 0.5) * 1.1, 0, Math.PI * 2);
+    g.stroke();
+  }
+
+  function paintPlus(g, x, y) {
+    g.beginPath();
+    g.moveTo(x - 3.2, y);
+    g.lineTo(x + 3.2, y);
+    g.moveTo(x, y - 3.2);
+    g.lineTo(x, y + 3.2);
+    g.stroke();
+  }
+
+  function paintCube(g, x, y) {
+    var s = 4.2;
+    var t = 3.1;
+    g.beginPath();
+    g.moveTo(x, y - s);
+    g.lineTo(x + t, y - s * 0.45);
+    g.lineTo(x + t, y + s * 0.55);
+    g.lineTo(x, y + s);
+    g.lineTo(x - t, y + s * 0.55);
+    g.lineTo(x - t, y - s * 0.45);
+    g.closePath();
+    g.moveTo(x, y - s);
+    g.lineTo(x, y + s);
+    g.moveTo(x - t, y - s * 0.45);
+    g.lineTo(x + t, y - s * 0.45);
+    g.stroke();
+  }
+
+  function paintTri(g, x, y) {
+    g.beginPath();
+    g.moveTo(x, y - 3.4);
+    g.lineTo(x + 3.2, y + 2.4);
+    g.lineTo(x - 3.2, y + 2.4);
+    g.closePath();
+    g.stroke();
+  }
+
+  function paintHex(g, x, y) {
+    var r = 7;
+    g.beginPath();
+    for (var k = 0; k < 6; k++) {
+      var a = Math.PI / 6 + k * Math.PI / 3;
+      var px = x + r * Math.cos(a);
+      var py = y + r * Math.sin(a);
+      if (k === 0) g.moveTo(px, py);
+      else g.lineTo(px, py);
+    }
+    g.closePath();
+    g.stroke();
+  }
+
+  function paintDot(g, x, y, r) {
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    g.fill();
+  }
+
   var PATTERNS = {
     roots: function (box) {
-      scatter(box, 28, function (x, y) {
-        var h = unitHash(x, y);
-        var s = 0.8 + h * 0.45;
-        x += (h - 0.5) * 8;
-        y += (unitHash(y, x) - 0.5) * 4;
-        ctx.beginPath();
-        ctx.moveTo(x, y - 2 * s);
-        ctx.lineTo(x, y + 3 * s);
-        ctx.moveTo(x, y);
-        ctx.lineTo(x - 4.2 * s, y + 3.4 * s);
-        ctx.moveTo(x, y + 0.6 * s);
-        ctx.lineTo(x + 3.6 * s, y + 3.6 * s);
-        ctx.moveTo(x, y - 0.4 * s);
-        ctx.lineTo(x - 3.2 * s, y - 2.6 * s);
-        ctx.stroke();
+      fillPattern(box, "roots", 112, 112, function (g, w, h) {
+        stamp(g, w, h, lattice(28, 4), paintRoot);
       });
     },
-    clay: function (box) { horizontals(box, 8, null); },
-    sand: function (box) { dots(box, 11, 0.7); },
+    clay: function (box) {
+      fillPattern(box, "clay", 8, 8, function (g, w, h) { paintRuled(g, w, h, null); });
+    },
+    sand: function (box) {
+      fillPattern(box, "sand", 44, 44, function (g, w, h) {
+        stamp(g, w, h, lattice(11, 4), function (gg, x, y) { paintDot(gg, x, y, 0.7); });
+      });
+    },
     gravel: function (box) {
-      scatter(box, 22, function (x, y) {
-        var h = unitHash(x, y);
-        var jx = (h - 0.5) * 8;
-        var jy = (unitHash(y, x) - 0.5) * 6;
-        ctx.beginPath();
-        ctx.ellipse(x + jx, y + jy, 2.4 + h * 2.2, 1.7 + (1 - h) * 1.5, (h - 0.5) * 1.1, 0, Math.PI * 2);
-        ctx.stroke();
+      fillPattern(box, "gravel", 88, 88, function (g, w, h) {
+        stamp(g, w, h, lattice(22, 4), paintGravel);
       });
     },
-    shale: function (box) { horizontals(box, 7, [5, 4]); },
-    sandstone: function (box) { horizontals(box, 11, [9, 7]); },
+    shale: function (box) {
+      fillPattern(box, "shale", 9, 7, function (g, w, h) { paintRuled(g, w, h, [5, 4]); });
+    },
+    sandstone: function (box) {
+      fillPattern(box, "sandstone", 16, 11, function (g, w, h) { paintRuled(g, w, h, [9, 7]); });
+    },
     limestone: function (box) {
-      var course = 13;
-      var brick = 22;
-      var y0 = Math.floor(box.y / course) * course;
-      var row = 0;
-      for (var y = y0; y < box.y + box.h + course; y += course) {
-        strokeLine(box.x - 2, y, box.x + box.w + 2, y);
-        var shift = (row % 2) * brick * 0.5;
-        var x0 = Math.floor((box.x - shift) / brick) * brick + shift;
-        for (var x = x0; x < box.x + box.w + brick; x += brick) strokeLine(x, y, x, y + course);
-        row++;
-      }
+      fillPattern(box, "limestone", 22, 26, function (g) {
+        g.save();
+        g.lineCap = "butt";
+        g.beginPath();
+        g.moveTo(0, 6.5);
+        g.lineTo(22, 6.5);
+        g.moveTo(0, 19.5);
+        g.lineTo(22, 19.5);
+        g.moveTo(0, 0);
+        g.lineTo(0, 13);
+        g.moveTo(22, 0);
+        g.lineTo(22, 13);
+        g.moveTo(11, 13);
+        g.lineTo(11, 26);
+        g.stroke();
+        g.restore();
+      });
     },
     granite: function (box) {
-      scatter(box, 22, function (x, y) {
-        strokeLine(x - 3.2, y, x + 3.2, y);
-        strokeLine(x, y - 3.2, x, y + 3.2);
+      fillPattern(box, "granite", 88, 88, function (g, w, h) {
+        stamp(g, w, h, lattice(22, 4), paintPlus);
       });
     },
-    gneiss: function (box) { waves(box, 12, 2.4, 0.28, null, 0); },
+    gneiss: function (box) {
+      var period = Math.PI * 2 / 0.28;
+      fillPattern(box, "gneiss", period, 12, function (g, w, h) {
+        paintWave(g, w, h, 2.4, 0.28, null, 0);
+      });
+    },
     peridotite: function (box) {
-      scatter(box, 26, function (x, y) {
-        var s = 4.2;
-        var t = 3.1;
-        ctx.beginPath();
-        ctx.moveTo(x, y - s);
-        ctx.lineTo(x + t, y - s * 0.45);
-        ctx.lineTo(x + t, y + s * 0.55);
-        ctx.lineTo(x, y + s);
-        ctx.lineTo(x - t, y + s * 0.55);
-        ctx.lineTo(x - t, y - s * 0.45);
-        ctx.closePath();
-        ctx.moveTo(x, y - s);
-        ctx.lineTo(x, y + s);
-        ctx.moveTo(x - t, y - s * 0.45);
-        ctx.lineTo(x + t, y - s * 0.45);
-        ctx.stroke();
+      fillPattern(box, "peridotite", 104, 104, function (g, w, h) {
+        stamp(g, w, h, lattice(26, 4), paintCube);
       });
     },
     transition: function (box) {
-      var spacing = 12;
-      var reach = box.w + box.h + spacing;
-      ctx.beginPath();
-      for (var d = -reach; d < reach; d += spacing) {
-        ctx.moveTo(box.x + d, box.y - 4);
-        ctx.lineTo(box.x + d - box.h - 8, box.y + box.h + 4);
-        ctx.moveTo(box.x + d, box.y - 4);
-        ctx.lineTo(box.x + d + box.h + 8, box.y + box.h + 4);
-      }
-      ctx.stroke();
-    },
-    mantle: function (box) {
-      scatter(box, 18, function (x, y) {
-        ctx.beginPath();
-        ctx.moveTo(x, y - 3.4);
-        ctx.lineTo(x + 3.2, y + 2.4);
-        ctx.lineTo(x - 3.2, y + 2.4);
-        ctx.closePath();
-        ctx.stroke();
+      fillPattern(box, "transition", 12, 12, function (g, w, h) {
+        g.save();
+        g.lineCap = "butt";
+        g.beginPath();
+        g.moveTo(0, 0);
+        g.lineTo(w, h);
+        g.moveTo(w, 0);
+        g.lineTo(0, h);
+        g.stroke();
+        g.restore();
       });
     },
-    dlayer: function (box) { waves(box, 8, 2.6, 0.52, null, 0); },
-    outer: function (box) { waves(box, 9, 3.4, 0.16, null, 0); },
+    mantle: function (box) {
+      fillPattern(box, "mantle", 72, 72, function (g, w, h) {
+        stamp(g, w, h, lattice(18, 4), paintTri);
+      });
+    },
+    dlayer: function (box) {
+      var period = Math.PI * 2 / 0.52;
+      fillPattern(box, "dlayer", period, 8, function (g, w, h) {
+        paintWave(g, w, h, 2.6, 0.52, null, 0);
+      });
+    },
+    outer: function (box) {
+      var period = Math.PI * 2 / 0.16;
+      fillPattern(box, "outer", period, 9, function (g, w, h) {
+        paintWave(g, w, h, 3.4, 0.16, null, 0);
+      });
+    },
     inner: function (box) {
-      var r = 7;
-      var dx = r * 1.75;
-      var dy = r * 1.52;
-      var y0 = Math.floor(box.y / dy) * dy;
-      var row = 0;
-      for (var y = y0; y < box.y + box.h + dy; y += dy) {
-        var shift = (row % 2) * dx * 0.5;
-        var x0 = Math.floor((box.x - shift) / dx) * dx + shift;
-        for (var x = x0; x < box.x + box.w + dx; x += dx) {
-          ctx.beginPath();
-          for (var k = 0; k < 6; k++) {
-            var a = Math.PI / 6 + k * Math.PI / 3;
-            var px = x + r * Math.cos(a);
-            var py = y + r * Math.sin(a);
-            if (k === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-          }
-          ctx.closePath();
-          ctx.stroke();
-        }
-        row++;
-      }
+      var dx = 7 * 1.75;
+      var dy = 7 * 1.52;
+      fillPattern(box, "inner", dx, dy * 2, function (g, w, h) {
+        stamp(g, w, h, [[0, 0], [dx / 2, dy]], paintHex);
+      });
     },
     groundwater: function (box) {
-      waves(box, 9, 2.2, 0.35, [7, 4], 0);
-      dots(box, 16, 1.05);
+      var period = Math.PI * 2 / 0.35;
+      fillPattern(box, "groundwater", period, 18, function (g, w, h) {
+        paintWave(g, w, h, 2.2, 0.35, [7, 4], 0);
+        stamp(g, w, h, [[0, 4], [8, 13]], function (gg, x, y) { paintDot(gg, x, y, 1.05); });
+      });
     },
     gas: function (box) {
-      scatter(box, 16, function (x, y) {
-        ctx.beginPath();
-        ctx.arc(x, y, 2.3, 0, Math.PI * 2);
-        ctx.stroke();
+      fillPattern(box, "gas", 64, 64, function (g, w, h) {
+        stamp(g, w, h, lattice(16, 4), function (gg, x, y) {
+          gg.beginPath();
+          gg.arc(x, y, 2.3, 0, Math.PI * 2);
+          gg.stroke();
+        });
       });
     },
     oil: function (box) {
-      waves(box, 8, 2.1, 0.42, [3, 3], 0);
-      dots(box, 13, 1.15);
+      var period = Math.PI * 2 / 0.42;
+      fillPattern(box, "oil", period, 16, function (g, w, h) {
+        paintWave(g, w, h, 2.1, 0.42, [3, 3], 0);
+        stamp(g, w, h, [[2, 4], [9, 12]], function (gg, x, y) { paintDot(gg, x, y, 1.15); });
+      });
     },
     brine: function (box) {
-      waves(box, 9, 2.2, 0.33, null, 0);
-      scatter(box, 16, function (x, y) {
-        ctx.strokeRect(x - 1.7, y - 1.7, 3.4, 3.4);
+      var period = Math.PI * 2 / 0.33;
+      fillPattern(box, "brine", period, 18, function (g, w, h) {
+        paintWave(g, w, h, 2.2, 0.33, null, 0);
+        stamp(g, w, h, [[4, 4], [12, 13]], function (gg, x, y) {
+          gg.strokeRect(x - 1.7, y - 1.7, 3.4, 3.4);
+        });
       });
     },
     magma: function (box) {
-      waves(box, 7, 3.2, 0.2, null, 0);
-      waves(box, 7, 1.5, 0.48, null, 3.5);
+      var period = Math.PI * 2 / 0.2;
+      fillPattern(box, "magma", period, 14, function (g, w, h) {
+        paintWave(g, w, h, 3.2, 0.2, null, 0);
+        paintWave(g, w, h, 1.5, 0.48, null, 3.5);
+      });
     }
   };
 
@@ -1150,7 +1275,36 @@
     return null;
   }
 
+  function noteFrame() {
+    if (holdFps) return;
+    var now = performance.now();
+    frameTimes.push(now);
+    var horizon = now - 500;
+    while (frameTimes.length && frameTimes[0] < horizon) frameTimes.shift();
+    if (frameTimes.length >= 2) {
+      var span = frameTimes[frameTimes.length - 1] - frameTimes[0];
+      if (span > 0) fpsLabel = Math.round((frameTimes.length - 1) * 1000 / span) + " fps";
+    }
+  }
+
+  function drawFps() {
+    setFont(14, 500);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    var tw = ctx.measureText(fpsLabel).width;
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(10, 10, tw + 16, 24);
+    ctx.strokeStyle = MID;
+    ctx.lineWidth = 0.8;
+    ctx.setLineDash([]);
+    ctx.strokeRect(10.5, 10.5, tw + 15, 23);
+    ctx.fillStyle = INK;
+    ctx.fillText(fpsLabel, 18, 14);
+  }
+
   function draw() {
+    var frameStart = performance.now();
+    noteFrame();
     resize();
     var aspect = sheetBox().w / Math.max(1, sheetBox().h);
     var forced = widthForLock(aspect);
@@ -1179,6 +1333,11 @@
     ctx.restore();
 
     drawFrame(v, tb);
+    if (!holdFps && frameTimes.length < 2) {
+      var alone = performance.now() - frameStart;
+      if (alone > 0) fpsLabel = Math.round(1000 / alone) + " fps";
+    }
+    drawFps();
   }
 
   function zoomBy(dy) {
@@ -1236,6 +1395,22 @@
     },
     preset: function (name) {
       applyPreset(name);
+    },
+    fps: function () {
+      return fpsLabel;
+    },
+    sample: function (n) {
+      n = n || 24;
+      frameTimes = [];
+      var t0 = performance.now();
+      for (var i = 0; i < n; i++) draw();
+      var ms = (performance.now() - t0) / n;
+      var rate = 1000 / ms;
+      fpsLabel = Math.round(rate) + " fps";
+      holdFps = true;
+      draw();
+      holdFps = false;
+      return { ms: ms, fps: rate, label: fpsLabel };
     },
     state: function () {
       var aspect = sheetBox().w / Math.max(1, sheetBox().h);
