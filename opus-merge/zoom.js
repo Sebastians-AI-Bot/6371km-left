@@ -1753,20 +1753,47 @@
     return Math.max(120, Math.ceil(3.2 * Math.sqrt(Math.max(1, rPx))));
   }
 
+  /* Rings inside the first sheet ring, each at half the angle of the one
+     before, down to about a patch from the pole. A ring fades in once it
+     is wide enough to read and is left out once it is far wider than the
+     sheet, so zooming on the pole always passes rings. */
+  function drawPoleRings(fv, r, keep, faint) {
+    var big = 8 * Math.max(fv.box.w, fv.box.h);
+    var outer = ctx.globalAlpha;
+    var deg = RINGS[0].a;
+    for (var n = 1; r * deg * Math.PI / 180 >= PATCH; n++) {
+      deg /= 2;
+      var rPx = r * Math.sin(deg * Math.PI / 180) * fv.px;
+      if (rPx < 14 || rPx > big) continue;
+      ctx.globalAlpha = outer * smoothstep((rPx - 14) / 50);
+      ringPen(n % 2 ? "mid" : "ink", faint);
+      cutCurve(fv, latitude(r, deg), ringSteps(rPx), keep);
+    }
+    ctx.globalAlpha = outer;
+    ctx.setLineDash([]);
+  }
+
   /* Outline, rings and meridians of the sphere, and the rings of the next
      unit where the cut has laid it bare. Left out once the globe is far
      bigger than the sheet. */
   function drawGlobeLines(fv) {
     var pxR = R * fv.px;
-    if (pxR > 60000) return;
     var rDig = digRadius();
+    var outside = function (p) {
+      return frontFacing(p) && !(inNotch(p) && rDig < R);
+    };
+    var bare = function (p) { return frontFacing(p) && inNotch(p); };
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    drawPoleRings(fv, R, outside, false);
+    if (rDig > 0 && rDig < R) drawPoleRings(fv, rDig, bare, true);
+    ctx.restore();
+    if (pxR > 60000) return;
     var c = cutProject(fv, [0, 0, 0]);
     ctx.save();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    var outside = function (p) {
-      return frontFacing(p) && !(inNotch(p) && rDig < R);
-    };
     var i;
     for (i = 0; i < RINGS.length; i++) {
       ringPen(RINGS[i].s, false);
@@ -1777,7 +1804,6 @@
     ctx.setLineDash([3, 5]);
     for (i = 0; i < MERIDIANS.length; i++) cutCurve(fv, meridian(R, MERIDIANS[i]), 200, outside);
     if (rDig > 0 && rDig < R) {
-      var bare = function (p) { return frontFacing(p) && inNotch(p); };
       for (i = 0; i < RINGS.length; i++) {
         if (RINGS[i].a >= 90) continue;
         ringPen(RINGS[i].s, true);
