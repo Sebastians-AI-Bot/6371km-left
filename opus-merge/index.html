@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6.371 km left — line zoom with slab globe</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #f3f0e8;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+    touch-action: none;
+  }
+</style>
+<script>
+/* Apply a saved dark ground before the first paint. The colour is the
+   invert of the paper, not a second palette. */
+(function () {
+  var dark = false;
+  try { dark = localStorage.getItem("zoom-lines-theme") === "dark"; } catch (e) {}
+  if (!dark) return;
+  var v = (0xffffff ^ parseInt("f3f0e8", 16)).toString(16);
+  while (v.length < 6) v = "0" + v;
+  var s = document.createElement("style");
+  s.textContent = "html,body{background:#" + v + "}";
+  document.head.appendChild(s);
+})();
+</script>
+</head>
+<body>
+<canvas id="sheet" aria-label="Line section from a 10 square metre patch out to a slab through the Earth"></canvas>
+<script src="zoom.js"></script>
+</body>
+</html>
