@@ -121,7 +121,8 @@
 
   var logW = Math.log10(nearWidth());
   var lock = "near";
-  /* 0 is the shallow frame (the surface on screen). 1 is the centre. */
+  /* 0 is the shallow frame (the surface on screen). 1 has the centre in
+     the middle of the screen. */
   var scrollT = 0;
   /* While a zoom is keeping the core in the middle, this is the view top.
      Scroll and a crust or soil slice clear it and follow scrollT. */
@@ -277,20 +278,18 @@
     return bot;
   }
 
+  /* View tops from the shallow frame to the centre in the middle. */
+  function scrollRange(worldH, box) {
+    var top0 = shallowTop(worldH, box);
+    return { top0: top0, top1: Math.max(top0, R - worldH / 2) };
+  }
+
   function placedView(worldW, t) {
     var box = sheetBox();
     var aspect = box.w / Math.max(1, box.h);
     var worldH = worldW / aspect;
-    var top0 = shallowTop(worldH, box);
-    var top1 = R - worldH;
-    var useT = t;
-    if (!(top1 > top0) && useT >= 0) useT = 0;
-    var bot0 = shallowBottom(worldH, box);
-    var bot = bot0 + useT * (R - bot0);
-    var top = bot - worldH;
-    if (!(top1 > top0) && useT >= 0) top = top0;
-    else if (top > top1) top = top1;
-    else if (useT >= 0 && top < top0) top = top0;
+    var range = scrollRange(worldH, box);
+    var top = lerp(range.top0, range.top1, clamp(t, 0, 1));
     if (coreHold && zoomTop != null) {
       top = zoomTop;
     } else {
@@ -315,15 +314,6 @@
 
   function viewOf(worldW) {
     return placedView(worldW, scrollT);
-  }
-
-  /* Strip position, linear in metres from the shallow frame to the centre. */
-  function stripDepth(t) {
-    var box = sheetBox();
-    var aspect = box.w / Math.max(1, box.h);
-    var bot0 = shallowBottom(currentWorldW() / aspect, box);
-    var tt = clamp(t, 0, 1);
-    return bot0 + tt * (R - bot0);
   }
 
   /* pxY, when set, is the depth scale of the centre face seen from above. */
@@ -2095,7 +2085,7 @@
       ["depth", shownDepth(v).text],
       ["scale", formatRawRatio(raw) + " \u2192 " + scaleText(v.worldW, v.box.w)],
       ["zoom", zoom],
-      ["scroll", formatTickDepth(stripDepth(clamp(scrollT, 0, 1)))],
+      ["scroll", formatTickDepth(v.top + v.worldH / 2)],
       ["fps", fpsLabel]
     ];
   }
@@ -2400,34 +2390,77 @@
     return null;
   }
 
+  /* The strip is a ruler, linear in depth, from the surface at the top
+     line to the centre at the bottom line. Its long dark band is the depth
+     on screen, never shorter than one line. Lines near the pointer swell
+     as on a dock. Band and swell ease toward where they should be. */
+  var STRIP_REST = 7;
+  var STRIP_BAND = 9;
+  var STRIP_SWELL = 14;
+  var STRIP_REACH = 7;
   var stripGeom = null;
-  var stripHot = -1;
+  var stripPointer = null;
   var stripDrag = false;
-  /* Set for the frame after an Alt-wheel, so the raised tick tracks the
-     scrolled depth instead of the pointer. */
-  var wheelLift = false;
+  var stripShown = null;
+  var stripHover = 0;
+  var stripHoverU = 0;
+  var stripLabelY = 0;
+  var stripLast = 0;
 
   function scrollStripGeom() {
     var pad = 12;
     var y0 = pad;
     var y1 = Math.max(y0 + 40, cssH - pad);
     var n = Math.max(24, Math.round((y1 - y0) / 8) + 1);
-    var maxLen = 30;
     var right = cssW - pageMargin();
+    var len = STRIP_REST + STRIP_BAND + STRIP_SWELL;
     return {
-      x: right - maxLen - 96,
+      x: right - len - 10,
       y: 0,
-      w: maxLen + 106,
+      w: len + 10 + pageMargin(),
       h: cssH,
       n: n,
       y0: y0,
       y1: y1,
+      gap: (y1 - y0) / (n - 1),
       right: right
     };
   }
 
-  function stripIndexAt(g, y) {
-    return clamp((y - g.y0) / Math.max(1, g.y1 - g.y0), 0, 1) * (g.n - 1);
+  /* Line i owns the depths from i/n to (i + 1)/n of the radius. */
+  function stripU(g, depth) {
+    return depth / R * g.n - 0.5;
+  }
+
+  function stripDepthAt(g, y) {
+    var u = (y - g.y0) / g.gap;
+    return clamp((u + 0.5) / g.n, 0, 1) * R;
+  }
+
+  function stripBand(g, v) {
+    var fv = faceView(v);
+    var a = stripU(g, clamp(fv.top, 0, R));
+    var b = stripU(g, clamp(fv.top + fv.worldH, 0, R));
+    if (b - a < 1) {
+      var c = clamp((a + b) / 2, 0, g.n - 1);
+      a = c - 0.5;
+      b = c + 0.5;
+    }
+    return { a: a, b: b };
+  }
+
+  function bell(x) {
+    return x < 1 ? 0.5 + 0.5 * Math.cos(Math.PI * x) : 0;
+  }
+
+  function mixHex(a, b, t) {
+    var x = parseInt(a.slice(1), 16);
+    var y = parseInt(b.slice(1), 16);
+    var c = [];
+    for (var k = 16; k >= 0; k -= 8) {
+      c.push(Math.round(((x >> k) & 255) * (1 - t) + ((y >> k) & 255) * t));
+    }
+    return "rgb(" + c.join(",") + ")";
   }
 
   /* The round earth essentially fits in the sheet. */
@@ -2437,74 +2470,53 @@
     return (2 * R) * px < Math.min(box.w, box.h) * 1.35;
   }
 
-  /* How many ticks, either side of the pointer, leave the short rest.
-     Zoomed in, only the tick under the pointer. Zoomed out to the globe,
-     the whole strip. Halfway along the log zoom, about half the ticks.
-     Once the globe is in view the half stays wide enough that every tick
-     is raised, even when the active tick sits at one end of the strip. */
-  function liftHalf(worldW, n) {
-    var aspect = sheetBox().w / Math.max(1, sheetBox().h);
-    var log0 = Math.log(closeWidth());
-    var log1 = Math.log(farWidth(aspect));
-    var t = clamp((Math.log(Math.max(worldW, closeWidth())) - log0) / Math.max(1e-6, log1 - log0), 0, 1);
-    var curved = 0.72 + (n * 0.95 - 0.72) * Math.pow(t, 1.6);
-    if (globeInView(worldW)) return Math.max(curved, n * 1.35);
-    return curved;
-  }
-
-  function dockWeight(dist, half) {
-    var a = Math.abs(dist);
-    if (a >= half) return 0;
-    var u = 1 - a / half;
-    return Math.pow(u, 0.55);
-  }
-
-  function drawTickDepth(g, worldW) {
-    if (stripHot < 0) return;
-    var t = clamp(stripHot / Math.max(1, g.n - 1), 0, 1);
-    var text = formatTickDepth(stripDepth(t));
-    var y = g.y0 + (g.y1 - g.y0) * t;
-    setFont(13);
-    ctx.textAlign = "right";
-    ctx.textBaseline = "middle";
-    var tw = ctx.measureText(text).width;
-    var tx = g.right - 38;
-    ctx.fillStyle = PAPER;
-    ctx.fillRect(tx - tw - 5, y - 9, tw + 8, 18);
-    ctx.fillStyle = INK;
-    ctx.fillText(text, tx, y);
-  }
-
-  function drawScrollStrip(worldW) {
+  function drawScrollStrip(v) {
     var g = scrollStripGeom();
+    var now = performance.now();
+    var dt = stripLast ? Math.min(100, now - stripLast) : 0;
+    stripLast = now;
+    var target = stripBand(g, v);
+    if (!stripShown || !stripGeom || stripGeom.n !== g.n) stripShown = target;
     stripGeom = g;
-    var active = Math.max(0, Math.min(g.n - 1, scrollT * (g.n - 1)));
-    var center = (wheelLift || stripHot < 0) ? Math.round(active) : Math.round(stripHot);
-    wheelLift = false;
-    var half = liftHalf(worldW, g.n);
-    var rest = 15;
-    var grow = 15;
-    var i;
-    var marks = [];
-    for (i = 0; i < g.n; i++) {
-      var w = dockWeight(i - center, half);
-      marks.push({
-        y: g.y0 + (g.y1 - g.y0) * (i / (g.n - 1)),
-        w: w,
-        len: rest + w * grow
-      });
+    var kBand = 1 - Math.exp(-dt / 90);
+    stripShown = {
+      a: lerp(stripShown.a, target.a, kBand),
+      b: lerp(stripShown.b, target.b, kBand)
+    };
+    var on = stripPointer != null;
+    if (on) {
+      var u = (stripPointer - g.y0) / g.gap;
+      stripHoverU = stripHover < 0.02 ? u : lerp(stripHoverU, u, 1 - Math.exp(-dt / 45));
+      stripLabelY = stripPointer;
     }
-    marks.sort(function (a, b) { return a.w - b.w; });
-    for (i = 0; i < marks.length; i++) {
-      var mark = marks[i];
-      var w = mark.w;
-      ctx.strokeStyle = w > 0.8 ? INK : w > 0.45 ? MID : w > 0.05 ? FAINT : HAIRLINE;
-      ctx.lineWidth = w > 0.8 ? 1.45 : w > 0.45 ? 1.2 : 1;
-      ctx.lineCap = "butt";
-      ctx.setLineDash([]);
-      strokeLine(g.right - mark.len, mark.y, g.right, mark.y);
+    stripHover = lerp(stripHover, on ? 1 : 0, 1 - Math.exp(-dt / 120));
+
+    ctx.save();
+    ctx.lineCap = "butt";
+    ctx.setLineDash([]);
+    for (var i = 0; i < g.n; i++) {
+      var band = Math.max(0, Math.min(i + 0.5, stripShown.b) - Math.max(i - 0.5, stripShown.a));
+      var swell = stripHover * bell(Math.abs(i - stripHoverU) / STRIP_REACH);
+      var len = STRIP_REST + STRIP_BAND * band + STRIP_SWELL * swell;
+      var y = Math.round(g.y0 + i * g.gap) + 0.5;
+      ctx.strokeStyle = mixHex(HAIRLINE, INK, Math.max(band, swell * 0.55));
+      ctx.lineWidth = 1 + 0.6 * band;
+      strokeLine(g.right - len, y, g.right, y);
     }
-    drawTickDepth(g, worldW);
+    if (stripHover > 0.02) {
+      var text = formatTickDepth(stripDepthAt(g, stripLabelY));
+      setFont(13);
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      var tw = ctx.measureText(text).width;
+      var tx = g.right - STRIP_REST - STRIP_BAND - STRIP_SWELL - 8;
+      ctx.globalAlpha = smoothstep(stripHover);
+      ctx.fillStyle = PAPER;
+      ctx.fillRect(tx - tw - 5, stripLabelY - 9, tw + 9, 18);
+      ctx.fillStyle = INK;
+      ctx.fillText(text, tx, stripLabelY);
+    }
+    ctx.restore();
   }
 
   function pointerOnStrip(x, y) {
@@ -2513,32 +2525,17 @@
     return x >= g.x && x <= g.x + g.w && y >= g.y && y <= g.y + g.h;
   }
 
-  function scrollFromPointer(y) {
-    var g = stripGeom;
-    if (!g) return;
-    zoomTop = null;
-    coreHold = false;
-    scrollT = clamp((y - g.y0) / Math.max(1, g.y1 - g.y0), 0, 1);
-  }
-
-  /* Alt-wheel scrolls by a fifth of the depth in the window. One notch
+  /* Alt-wheel scrolls by a fifth of the depth on screen. One notch
      (deltaY 100) is that far up or down. The shallow stop is the surface
-     on screen. The deep stop is the centre. Strip drag stays linear. */
+     on screen. The deep stop is the centre in the middle of the screen. */
   function scrollByWheel(dy) {
-    var v = viewOf(currentWorldW());
-    var bottom = v.top + v.worldH;
-    var origin = Math.max(0, v.top);
-    var limit = Math.min(R, bottom);
-    var height = limit - origin;
-    if (!(height > 1e-6)) height = v.worldH;
-    var metres = (dy / 100) * (height / 5);
-    var minBot = shallowBottom(v.worldH, v.box);
-    var next = clamp(bottom + metres, minBot, R);
-    var span = R - minBot;
+    var worldW = currentWorldW();
+    var v = viewOf(worldW);
+    var shown = Math.min(R, v.top + v.worldH) - Math.max(0, v.top);
+    if (!(shown > 1e-6)) shown = v.worldH;
     zoomTop = null;
     coreHold = false;
-    scrollT = span > 1 ? (next - minBot) / span : 0;
-    wheelLift = true;
+    scrollT = scrollForTop(worldW, v.top + (dy / 100) * (shown / 5));
   }
 
   /* A timbered shaft in the patch, from the surface into the gravel.
@@ -3939,7 +3936,7 @@
     ctx.restore();
 
     drawFrame(v, tb);
-    drawScrollStrip(worldW);
+    drawScrollStrip(v);
     drawFps();
     drawDebug(v);
     if (modalOpen) drawMachinesModal();
@@ -3983,8 +3980,7 @@
     logW = Math.log10(worldW);
     var worldH = worldW / aspect;
     var top0 = shallowTop(worldH, before.box);
-    var top1 = R - worldH;
-    var lookPast = before.top + before.worldH > R + 0.5;
+    var top1 = scrollRange(worldH, before.box).top1;
     var top;
     if (coreIsSubject(before)) {
       coreHold = true;
@@ -3995,7 +3991,7 @@
     } else {
       coreHold = false;
       top = depth - (screenY - before.box.y) * worldH / before.box.h;
-      if (!lookPast && top > top1) top = top1;
+      if (top > top1) top = top1;
     }
     zoomTop = top;
     scrollT = scrollForTop(worldW, top);
@@ -4004,14 +4000,19 @@
   function scrollForTop(worldW, top) {
     var box = sheetBox();
     var aspect = box.w / Math.max(1, box.h);
-    var worldH = worldW / aspect;
-    var bot0 = shallowBottom(worldH, box);
-    var span = R - bot0;
-    if (!(span > 1)) return 0;
-    var bot = Math.min(R, top + worldH);
-    var t = (bot - bot0) / span;
-    if (t > 1) return 1;
-    return t;
+    var range = scrollRange(worldW / aspect, box);
+    var span = range.top1 - range.top0;
+    if (!(span > 1e-6)) return 0;
+    return clamp((top - range.top0) / span, 0, 1);
+  }
+
+  /* Puts a depth in the middle of the screen, as far as the range allows. */
+  function scrollToDepth(depth) {
+    var worldW = currentWorldW();
+    var v = viewOf(worldW);
+    zoomTop = null;
+    coreHold = false;
+    scrollT = scrollForTop(worldW, depth - v.worldH / 2);
   }
 
   function applyPreset(name) {
@@ -4094,8 +4095,8 @@
       return;
     }
     if (stripDrag) {
-      scrollFromPointer(p.y);
-      if (stripGeom) stripHot = stripIndexAt(stripGeom, p.y);
+      stripPointer = p.y;
+      scrollToDepth(stripDepthAt(stripGeom, p.y));
       return;
     }
     if (sliderAt(p.x, p.y)) {
@@ -4108,10 +4109,10 @@
       return;
     }
     if (pointerOnStrip(p.x, p.y)) {
-      stripHot = stripIndexAt(stripGeom, p.y);
+      stripPointer = p.y;
       canvas.style.cursor = "ns-resize";
     } else {
-      stripHot = -1;
+      stripPointer = null;
       canvas.style.cursor = "crosshair";
     }
   });
@@ -4155,14 +4156,17 @@
     }
     if (!pointerOnStrip(p.x, p.y)) return;
     stripDrag = true;
-    scrollFromPointer(p.y);
-    stripHot = stripIndexAt(stripGeom, p.y);
+    stripPointer = p.y;
+    scrollToDepth(stripDepthAt(stripGeom, p.y));
     event.preventDefault();
   });
 
   window.addEventListener("mouseup", function () {
     stripDrag = false;
     sliderDrag = null;
+  });
+  document.addEventListener("mouseleave", function () {
+    if (!stripDrag) stripPointer = null;
   });
 
   window.addEventListener("keydown", function (event) {
@@ -4186,6 +4190,9 @@
     },
     preset: function (name) {
       applyPreset(name);
+    },
+    scrollTo: function (depth) {
+      scrollToDepth(depth);
     },
     dig: function (name) {
       var i = typeof name === "number" ? name : digByName(name);
