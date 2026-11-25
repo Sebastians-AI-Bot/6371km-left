@@ -124,10 +124,6 @@
   /* 0 is the shallow frame (the surface on screen). 1 has the centre in
      the middle of the screen. */
   var scrollT = 0;
-  /* While a zoom is keeping the core in the middle, this is the view top.
-     Scroll and a crust or soil slice clear it and follow scrollT. */
-  var zoomTop = null;
-  var coreHold = false;
   var pointerY = null;
   var OPEN_DEPTH = 3;
   /* Presented frames, not a tight redraw loop. A bucket of about a tenth
@@ -290,17 +286,13 @@
     var worldH = worldW / aspect;
     var range = scrollRange(worldH, box);
     var top = lerp(range.top0, range.top1, clamp(t, 0, 1));
-    if (coreHold && zoomTop != null) {
-      top = zoomTop;
-    } else {
-      /* Zooming out eases the horizon pin toward a centred globe.
-         Fully zoomed out, the core sits on the middle of the screen. */
-      var farH = farWidth(aspect) / aspect;
-      if (worldH >= 2 * R && farH > 2 * R) {
-        var u = clamp((worldH - 2 * R) / (farH - 2 * R), 0, 1);
-        u = u * u * (3 - 2 * u);
-        top = lerp(top, R - worldH / 2, u);
-      }
+    /* Zooming out eases the horizon pin toward a centred globe.
+       Fully zoomed out, the core sits on the middle of the screen. */
+    var farH = farWidth(aspect) / aspect;
+    if (worldH >= 2 * R && farH > 2 * R) {
+      var u = clamp((worldH - 2 * R) / (farH - 2 * R), 0, 1);
+      u = u * u * (3 - 2 * u);
+      top = lerp(top, R - worldH / 2, u);
     }
     return {
       box: box,
@@ -2096,7 +2088,8 @@
   var machinesHit = null;
   var digUpHit = null;
   var digDownHit = null;
-  var wheelSpeed = 1;
+  /* Shift turns the wheel at 1×, whatever the slider says. */
+  var wheelSpeed = 0.33;
 
   /* Log sliders in the debug panel. */
   var SLIDERS = [
@@ -2533,8 +2526,6 @@
     var v = viewOf(worldW);
     var shown = Math.min(R, v.top + v.worldH) - Math.max(0, v.top);
     if (!(shown > 1e-6)) shown = v.worldH;
-    zoomTop = null;
-    coreHold = false;
     scrollT = scrollForTop(worldW, v.top + (dy / 100) * (shown / 5));
   }
 
@@ -3954,20 +3945,9 @@
     return clamp(Math.pow(10, logW), closeWidth(), farWidth(aspect));
   }
 
-  /* The core is already in the middle, and the window is still taller than
-     a crust slice. Pointer zoom returns once the view is crust or soil. */
-  function coreIsSubject(v) {
-    if (v.worldH < 80000) return false;
-    var coreY = v.box.y + (R - v.top) * v.px;
-    var mid = v.box.y + v.box.h / 2;
-    return Math.abs(coreY - mid) <= v.box.h * 0.16;
-  }
-
-  /* Wheel zoom is vertical only. While the core is the picture, the zoom
-     is about the screen centre so the core stays put. On a crust or soil
-     slice it is about the depth under the pointer again. The horizon stays
-     one third down when the pointer is on the surface. The deep stop of a
-     slice is the centre. */
+  /* Wheel zoom is vertical only, about the depth under the pointer. The
+     horizon stays one third down when the pointer is on the surface. The
+     deep stop is the centre in the middle of the screen. */
   function zoomAt(dy, screenY) {
     var before = viewOf(currentWorldW());
     var ay = cutAnchor(before.box);
@@ -3982,18 +3962,12 @@
     var top0 = shallowTop(worldH, before.box);
     var top1 = scrollRange(worldH, before.box).top1;
     var top;
-    if (coreIsSubject(before)) {
-      coreHold = true;
-      top = R - worldH / 2;
-    } else if (!(depth > 0)) {
-      coreHold = false;
+    if (!(depth > 0)) {
       top = top0;
     } else {
-      coreHold = false;
       top = depth - (screenY - before.box.y) * worldH / before.box.h;
       if (top > top1) top = top1;
     }
-    zoomTop = top;
     scrollT = scrollForTop(worldW, top);
   }
 
@@ -4010,8 +3984,6 @@
   function scrollToDepth(depth) {
     var worldW = currentWorldW();
     var v = viewOf(worldW);
-    zoomTop = null;
-    coreHold = false;
     scrollT = scrollForTop(worldW, depth - v.worldH / 2);
   }
 
@@ -4021,8 +3993,6 @@
     else if (name === "globe" || name === "3") lock = "globe";
     else return false;
     scrollT = 0;
-    zoomTop = null;
-    coreHold = false;
     return true;
   }
 
@@ -4071,9 +4041,10 @@
     event.preventDefault();
     if (modalOpen) return;
     var dy = event.deltaY;
+    if (event.shiftKey && !dy) dy = event.deltaX;
     if (event.deltaMode === 1) dy *= 16;
     else if (event.deltaMode === 2) dy *= 400;
-    dy *= wheelSpeed;
+    dy *= event.shiftKey ? 1 : wheelSpeed;
     pointerY = event.clientY;
     if (event.altKey) scrollByWheel(dy);
     else zoomBy(dy);
