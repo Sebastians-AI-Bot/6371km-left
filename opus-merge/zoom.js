@@ -1,10 +1,11 @@
 /* Line section for "6.371 km left".
    Open index.html in a browser (no server). The wheel zooms from the
-   10 m² patch to a section of the Earth. Past the flat globe the wheel
-   keeps going: the section turns out to be the front face of a slab
-   through the centre, standing in a perspective sphere of rings.
-   Hold Alt and the wheel scrolls the section. Keys 1, 2 and 3 jump to
-   the soils, the crust, and the globe. */
+   10 m² patch out to the Earth. The section is the centre face of a
+   cut in the globe: one patch wide, facing the camera, with a cut face
+   at 45° either side. The cut goes down to the base of the unit being
+   dug. Hold Alt and the wheel scrolls the section. Keys 1, 2 and 3 jump
+   to the soils, the crust, and the globe. ?dig=granite opens the cut at
+   that unit; the debug panel steps it. */
 
 (function () {
   "use strict";
@@ -324,10 +325,11 @@
     return bot0 + tt * (R - bot0);
   }
 
+  /* pxY, when set, is the depth scale of the centre face seen from above. */
   function worldToScreen(v, x, y) {
     return {
       x: v.box.x + (x - v.left) * v.px,
-      y: v.box.y + (y - v.top) * v.px
+      y: v.box.y + (y - v.top) * (v.pxY || v.px)
     };
   }
 
@@ -1011,82 +1013,26 @@
     return true;
   }
 
-  function labelPoint(v, d0, d1, pocket) {
-    if (pocket) {
-      var p = worldToScreen(v, (pocket.x0 + pocket.x1) / 2, (d0 + d1) / 2);
-      return { x: p.x, y: p.y, align: "center" };
-    }
-    if (ringMode(v, d0)) {
-      var c = worldToScreen(v, 0, R);
-      var outer = (R - d0) * v.px;
-      if (d1 >= R - 1) return { x: c.x, y: c.y + outer + 16, align: "center" };
-      var inner = Math.max(0, (R - d1) * v.px);
-      var rm = (outer + inner) * 0.5;
-      var ang = Math.PI * 0.78;
-      return {
-        x: c.x + Math.cos(ang) * rm,
-        y: c.y - Math.sin(ang) * rm,
-        align: "center"
-      };
-    }
-    var top = Math.max(d0, v.top);
-    var bot = Math.min(d1, v.top + v.worldH);
-    return { x: v.box.x + 18, y: worldToScreen(v, 0, (top + bot) / 2).y, align: "left" };
-  }
-
-  function drawMaterials(v, tb) {
-    var nextZoom = zoomScale(v);
-    if (nextZoom !== hatchZoom) hatchZoom = nextZoom;
+  /* Rock units down to depthMax, and the pockets inside that depth. */
+  function paintUnits(v, depthMax, pockets) {
     hatchAnchor = worldToScreen(v, 0, 0);
-    var labels = [];
-    var from = 0;
-    var i;
     ctx.save();
     clipBelowSurface(v);
-    for (i = 0; i < COLUMN.length; i++) {
-      var unit = COLUMN[i];
-      var drew = paintRegion(v, from, unit.to, unit.hatch, null, null, false);
-      if (drew && visiblePx(v, from, unit.to) >= 22) {
-        labels.push({ name: unit.name, d0: from, d1: unit.to, pocket: null });
-      }
-      from = unit.to;
+    var from = 0;
+    var i;
+    for (i = 0; i < COLUMN.length && from < depthMax; i++) {
+      paintRegion(v, from, COLUMN[i].to, COLUMN[i].hatch, null, null, false);
+      from = COLUMN[i].to;
     }
-    for (i = 0; i < POCKETS.length; i++) {
-      var pocket = POCKETS[i];
-      var ok = paintRegion(v, pocket.d0, pocket.d1, pocket.hatch, pocket.x0, pocket.x1, true);
-      if (ok && visiblePx(v, pocket.d0, pocket.d1) >= 26) {
-        labels.push({ name: pocket.name, d0: pocket.d0, d1: pocket.d1, pocket: pocket });
+    if (pockets) {
+      for (i = 0; i < POCKETS.length; i++) {
+        var pocket = POCKETS[i];
+        if (pocket.d1 > depthMax) continue;
+        paintRegion(v, pocket.d0, pocket.d1, pocket.hatch, pocket.x0, pocket.x1, true);
       }
     }
     ctx.restore();
-    setFont(12);
-    ctx.textBaseline = "middle";
-    var used = [];
-    for (i = 0; i < labels.length; i++) {
-      var item = labels[i];
-      var pt = labelPoint(v, item.d0, item.d1, item.pocket);
-      if (pt.y < v.box.y + 12 || pt.y > v.box.y + v.box.h - 12) continue;
-      if (pt.x < v.box.x + 8 || pt.x > v.box.x + v.box.w - 8) continue;
-      if (inBlock(tb, pt.x, pt.y, 12)) continue;
-      var clash = false;
-      for (var j = 0; j < used.length; j++) {
-        if (Math.abs(used[j].y - pt.y) < 16 && Math.abs(used[j].x - pt.x) < 140) {
-          clash = true;
-          break;
-        }
-      }
-      if (clash) continue;
-      var tw = ctx.measureText(item.name).width;
-      var rx = pt.align === "center" ? pt.x - tw / 2 : pt.x;
-      ctx.fillStyle = PAPER;
-      ctx.fillRect(rx - 3, pt.y - 8, tw + 6, 16);
-      ctx.fillStyle = INK;
-      ctx.textAlign = pt.align;
-      ctx.fillText(item.name, pt.x, pt.y);
-      used.push(pt);
-    }
   }
-
 
   function drawHatch(v) {
     if (!(PIT_D * v.px > 6 && PIT_W * v.px > 14)) return;
@@ -1115,15 +1061,17 @@
     return true;
   }
 
-  function drawLayers(v) {
-    var kept = [R * v.px];
+  /* Boundaries down to depthMax. The base of the cut and the surface are
+     edges of the cut, drawn heavier. */
+  function drawLayerLines(v, depthMax, pit) {
+    var kept = [R * v.px, (R - depthMax) * v.px];
     var i;
     for (i = 0; i < LAYERS.length; i++) {
       var layer = LAYERS[i];
       var radius = R - layer.depth;
-      if (radius <= 0) continue;
+      if (radius <= 0 || layer.depth >= depthMax) continue;
       if (layer.depth * v.px < 2.4) continue;
-      var onScreen = layer.depth + v.top < v.worldH && layer.depth > v.top - v.worldH;
+      var onScreen = layer.depth < v.top + v.worldH * 2 && layer.depth > v.top - v.worldH;
       var shellVisible = radius * v.px < v.box.w * 2.2;
       if (!onScreen && !shellVisible) continue;
       if (!layerSeparated(kept, radius, v.px)) continue;
@@ -1135,7 +1083,8 @@
     ctx.setLineDash([]);
     ctx.strokeStyle = INK;
     ctx.lineWidth = 1.35;
-    var openPit = PIT_W * v.px > 10;
+    if (depthMax < R) drawShell(v, R - depthMax, null);
+    var openPit = pit && PIT_W * v.px > 10;
     drawShell(v, R, openPit ? [-PIT_W / 2, PIT_W / 2] : null);
   }
 
@@ -1271,7 +1220,7 @@
     var from = 0;
     var i;
     setFont(12);
-    for (i = 0; i < COLUMN.length; i++) {
+    for (i = 0; i < COLUMN.length && from < digDepth(); i++) {
       var unit = COLUMN[i];
       var y0 = worldToScreen(v, 0, from).y;
       var y1 = worldToScreen(v, 0, unit.to).y;
@@ -1403,11 +1352,11 @@
 
     if (full) {
       var over = 22;
-      strokeLine(c.x, topPt.y - over, c.x, c.y + pxR + over);
+      strokeLine(c.x, c.y - pxR - over, c.x, c.y + pxR + over);
       strokeLine(c.x - pxR - over, c.y, c.x + pxR + over, c.y);
       ctx.setLineDash([]);
       ctx.lineWidth = 0.9;
-      tickEnds(c.x, topPt.y - over, c.x, c.y + pxR + over, true);
+      tickEnds(c.x, c.y - pxR - over, c.x, c.y + pxR + over, true);
       tickEnds(c.x - pxR - over, c.y, c.x + pxR + over, c.y, false);
       ctx.beginPath();
       ctx.arc(c.x, c.y, 3.2, 0, Math.PI * 2);
@@ -1416,7 +1365,7 @@
       strokeLine(c.x, c.y - 7, c.x, c.y + 7);
     } else {
       var y0 = Math.max(v.box.y + 8, topPt.y - 18);
-      var y1 = v.box.y + v.box.h - 16;
+      var y1 = Math.min(v.box.y + v.box.h - 16, worldToScreen(v, 0, digDepth()).y);
       if (y1 - y0 > 20) strokeLine(topPt.x, y0, topPt.x, y1);
       ctx.setLineDash([]);
     }
@@ -1434,10 +1383,9 @@
     }
   }
 
-  /* c and edge may be given in screen pixels, for the tilted slab face. */
-  function drawRadiusDim(v, tb, c, edge) {
-    c = c || worldToScreen(v, 0, R);
-    edge = edge || worldToScreen(v, R, R);
+  function drawRadiusDim(v, tb) {
+    var c = worldToScreen(v, 0, R);
+    var edge = worldToScreen(v, R, R);
     var pxR = R * v.px;
     if (pxR < 80) return;
     if (c.x < v.box.x + 20 || edge.x > v.box.x + v.box.w - 8) return;
@@ -1469,10 +1417,10 @@
     ctx.fillText(label, mid, y);
   }
 
-  function drawLocator(v, tb, at) {
+  function drawLocator(v, tb) {
     var widthPx = PATCH * v.px;
     if (widthPx > 18) return;
-    var p = at || worldToScreen(v, 0, surfaceY(0));
+    var p = worldToScreen(v, 0, surfaceY(0));
     if (p.x < v.box.x || p.x > v.box.x + v.box.w || p.y < v.box.y || p.y > v.box.y + v.box.h) return;
     ctx.strokeStyle = INK;
     ctx.fillStyle = PAPER;
@@ -1512,74 +1460,226 @@
     ctx.fillText(label, lx, ly);
   }
 
-  /* ---------- slab globe ----------
-     Past the flat globe the wheel keeps zooming out for SLAB_SPAN decades.
-     The first SLAB_FADE of that hands the flat section over to the same face
-     drawn in 3D, head on. The rest tilts the camera up and to the side: the
-     section is the front face of a slab through the centre, the rest of the
-     sphere only rings and an outline, dashed where it has been cut away.
-     Unit sphere, pole on +y, the section in the plane z = 0 facing +z, and
-     the slab running back from it to z = -SLAB_T. */
-  var SLAB_SPAN = 0.6;
-  var SLAB_FADE = 0.18;
-  var SLAB_T = 0.3;
-  var SLAB_DIST = 3.8;
-  var SLAB_ELEV = 24;
-  var SLAB_AZIM = 34;
-  var SLAB_SHRINK = 0.86;
-  var SLAB_RINGS = [8, 16, 24, 33, 43, 54, 66, 79, 93, 108, 124, 142];
+  /* ---------- cut globe ----------
+     Parallel projection from above the front, at the angle of the
+     sphere-opus sheet. The top front quarter of the sphere is cut away as
+     a \_/ notch: the centre face is one patch wide, holds the shaft and
+     faces the camera; the camera height only squashes it. Either side a
+     face runs off at 45°, and the notch floor is the equator. Past the
+     edges of the centre face the flat section is folded onto the side
+     faces, so every face of the cut is the same 2D drawing. The notch goes
+     down to the base of the unit being dug; below that the next unit
+     shows as a curved surface. Parallel, not true perspective, so each
+     face is an affine copy of the flat drawing and the faces meet exactly
+     at every zoom. Sphere centre at the origin, pole on +y, camera
+     toward +z. Metres throughout. */
+  var CUT_ELEV = 28.7 * Math.PI / 180;
+  var COS_E = Math.cos(CUT_ELEV);
+  var SIN_E = Math.sin(CUT_ELEV);
+  var FACE_HALF = PATCH / 2;
+  var digUnit = COLUMN.length - 1;
 
-  function maxWidth(aspect) {
-    return farWidth(aspect) * Math.pow(10, SLAB_SPAN);
+  /* Section rings by angle from the pole, as on the sphere-opus sheet. */
+  var RINGS = [
+    { a: 4, s: "mid" }, { a: 7, s: "ink" }, { a: 10, s: "mid" }, { a: 13, s: "ink" },
+    { a: 16, s: "faint" }, { a: 19, s: "ink" }, { a: 23, s: "mid" }, { a: 27, s: "ink" },
+    { a: 32, s: "faint" }, { a: 37, s: "mid" }, { a: 43, s: "dash" }, { a: 50, s: "mid" },
+    { a: 58, s: "dash" }, { a: 67, s: "faint" }, { a: 78, s: "dash" }, { a: 90, s: "ink" },
+    { a: 104, s: "dash" }, { a: 120, s: "faint" }
+  ];
+  var MERIDIANS = [-120, -80, 80, 120];
+
+  function digDepth() {
+    return COLUMN[digUnit].to;
   }
 
-  function slabProgress(aspect) {
-    return clamp((logW - Math.log10(farWidth(aspect))) / SLAB_SPAN, 0, 1);
+  function digRadius() {
+    return R - digDepth();
   }
 
   function dot3(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
-  function cross3(a, b) {
-    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-  }
-  function norm3(a) {
-    var l = Math.sqrt(dot3(a, a));
-    return [a[0] / l, a[1] / l, a[2] / l];
+
+  /* The flat view as it lands on the centre face: x as drawn, depth
+     squashed about the middle of the sheet. */
+  function cutAnchor(box) {
+    return box.y + box.h / 2;
   }
 
-  /* Head on, one Earth radius on the face is R * v.px, as in the flat view. */
-  function slabCamera(v, slab) {
-    var s = smoothstep((slab - SLAB_FADE) / (1 - SLAB_FADE));
-    var th = SLAB_ELEV * s * Math.PI / 180;
-    var ph = SLAB_AZIM * s * Math.PI / 180;
-    var D = SLAB_DIST;
-    var pos = [D * Math.sin(ph) * Math.cos(th), D * Math.sin(th), D * Math.cos(ph) * Math.cos(th)];
-    var f = [-pos[0] / D, -pos[1] / D, -pos[2] / D];
-    var r = norm3(cross3(f, [0, 1, 0]));
-    var c = worldToScreen(v, 0, R);
+  function faceView(v) {
+    var ay = cutAnchor(v.box);
     return {
-      s: s, pos: pos, f: f, r: r, u: cross3(r, f),
-      cx: c.x, cy: c.y, k: D * R * v.px * lerp(1, SLAB_SHRINK, s)
+      box: v.box,
+      worldW: v.worldW,
+      worldH: v.worldH / COS_E,
+      left: v.left,
+      top: v.top + (v.box.y - ay) * (1 - COS_E) / (v.px * COS_E),
+      px: v.px,
+      pxY: v.px * COS_E
     };
   }
 
-  function slabProject(cam, p) {
-    var d = [p[0] - cam.pos[0], p[1] - cam.pos[1], p[2] - cam.pos[2]];
-    var z = dot3(d, cam.f);
-    return { x: cam.cx + dot3(d, cam.r) / z * cam.k, y: cam.cy - dot3(d, cam.u) / z * cam.k };
+  function cutProject(fv, p) {
+    return {
+      x: fv.box.x + (p[0] - fv.left) * fv.px,
+      y: fv.box.y + (R - fv.top) * fv.pxY - (p[1] * COS_E - p[2] * SIN_E) * fv.px
+    };
   }
 
-  function facing(cam, p) {
-    return dot3(p, cam.pos) > 1;
+  /* Flat section coordinates (x across, y down from the pole) to the cut.
+     Folding keeps the rings within half a metre of the sphere. */
+  var PIECES = [
+    {
+      name: "floor", x0: -FACE_HALF - R, x1: FACE_HALF + R, y0: 0, y1: R, wedge: true,
+      to3: function (x, y) { return [x, 0, R - y]; }
+    },
+    {
+      name: "left", x0: -R, x1: -FACE_HALF, y0: -R, y1: R,
+      to3: function (x, y) {
+        var s = (-x - FACE_HALF) / Math.SQRT2;
+        return [-FACE_HALF - s, R - y, s];
+      }
+    },
+    {
+      name: "right", x0: FACE_HALF, x1: R, y0: -R, y1: R,
+      to3: function (x, y) {
+        var s = (x - FACE_HALF) / Math.SQRT2;
+        return [FACE_HALF + s, R - y, s];
+      }
+    },
+    {
+      name: "face", x0: -FACE_HALF, x1: FACE_HALF, y0: -R, y1: R,
+      to3: function (x, y) { return [x, R - y, 0]; }
+    }
+  ];
+
+  function pieceNamed(name) {
+    for (var i = 0; i < PIECES.length; i++) if (PIECES[i].name === name) return PIECES[i];
+    return null;
+  }
+
+  /* Screen = o + x * a + y * b for flat x, y on the piece. */
+  function pieceAffine(fv, piece) {
+    var o = cutProject(fv, piece.to3(0, 0));
+    var a = cutProject(fv, piece.to3(1, 0));
+    var b = cutProject(fv, piece.to3(0, 1));
+    return { ox: o.x, oy: o.y, ax: a.x - o.x, ay: a.y - o.y, bx: b.x - o.x, by: b.y - o.y };
+  }
+
+  function applyAffine(m, x, y) {
+    return { x: m.ox + m.ax * x + m.bx * y, y: m.oy + m.ay * x + m.by * y };
+  }
+
+  /* Flat coordinates to the screen, through whichever face holds x. */
+  function foldToScreen(fv, x, y) {
+    var name = x > FACE_HALF ? "right" : x < -FACE_HALF ? "left" : "face";
+    return applyAffine(pieceAffine(fv, pieceNamed(name)), x, y);
+  }
+
+  /* The part of the piece under the sheet, as a flat view the section
+     drawing can cull against. Same metres per pixel as the face. */
+  function pieceView(fv, piece, m) {
+    var det = m.ax * m.by - m.bx * m.ay;
+    if (Math.abs(det) < 1e-18) return null;
+    var box = fv.box;
+    var pad = 24;
+    var corners = [
+      [box.x - pad, box.y - pad], [box.x + box.w + pad, box.y - pad],
+      [box.x - pad, box.y + box.h + pad], [box.x + box.w + pad, box.y + box.h + pad]
+    ];
+    var x0 = Infinity;
+    var x1 = -Infinity;
+    var y0 = Infinity;
+    var y1 = -Infinity;
+    for (var i = 0; i < 4; i++) {
+      var dx = corners[i][0] - m.ox;
+      var dy = corners[i][1] - m.oy;
+      var x = (dx * m.by - dy * m.bx) / det;
+      var y = (m.ax * dy - m.ay * dx) / det;
+      x0 = Math.min(x0, x);
+      x1 = Math.max(x1, x);
+      y0 = Math.min(y0, y);
+      y1 = Math.max(y1, y);
+    }
+    x0 = Math.max(x0, piece.x0);
+    x1 = Math.min(x1, piece.x1);
+    y0 = Math.max(y0, piece.y0);
+    y1 = Math.min(y1, piece.y1);
+    if (!(x1 > x0) || !(y1 > y0)) return null;
+    return {
+      box: { x: box.x, y: box.y, w: (x1 - x0) * fv.px, h: (y1 - y0) * fv.px },
+      worldW: x1 - x0,
+      worldH: y1 - y0,
+      left: x0,
+      top: y0,
+      px: fv.px
+    };
+  }
+
+  /* From the piece view's drawing space onto its face of the cut. */
+  function enterPiece(vp, m) {
+    var k = 1 / vp.px;
+    var wx = vp.left - vp.box.x * k;
+    var wy = vp.top - vp.box.y * k;
+    ctx.transform(m.ax * k, m.ay * k, m.bx * k, m.by * k,
+      m.ox + m.ax * wx + m.bx * wy, m.oy + m.ay * wx + m.by * wy);
+  }
+
+  function clipPiece(vp, piece) {
+    ctx.beginPath();
+    if (piece.wedge) {
+      var y0 = vp.top;
+      var y1 = vp.top + vp.worldH;
+      var pts = [
+        [-FACE_HALF - (R - y0), y0], [FACE_HALF + (R - y0), y0],
+        [FACE_HALF + (R - y1), y1], [-FACE_HALF - (R - y1), y1]
+      ];
+      for (var i = 0; i < pts.length; i++) {
+        var p = worldToScreen(vp, pts[i][0], pts[i][1]);
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+      ctx.closePath();
+    } else {
+      ctx.rect(vp.box.x, vp.box.y, vp.box.w, vp.box.h);
+    }
+    ctx.clip();
+  }
+
+  function drawPiece(fv, piece) {
+    var m = pieceAffine(fv, piece);
+    var vp = pieceView(fv, piece, m);
+    if (!vp) return;
+    var face = piece.name === "face";
+    var depth = digDepth();
+    ctx.save();
+    enterPiece(vp, m);
+    clipPiece(vp, piece);
+    paintUnits(vp, depth, !piece.wedge);
+    drawLayerLines(vp, depth, face);
+    if (face) {
+      drawHatch(vp);
+      drawPitAndSurfaceCut(vp);
+    }
+    if ((face || piece.name === "right") && depth >= SHAFT.y1) drawWorks(vp);
+    ctx.restore();
+  }
+
+  function frontFacing(p) {
+    return p[1] * SIN_E + p[2] * COS_E > 0;
+  }
+
+  function inNotch(p) {
+    return p[1] > 0 && p[2] > 0 && Math.abs(p[0]) < FACE_HALF + p[2];
   }
 
   /* Strokes a sampled curve, broken wherever keep() fails. */
-  function slabCurve(cam, pointAt, n, keep) {
+  function cutCurve(fv, pointAt, n, keep) {
     var open = false;
     ctx.beginPath();
     for (var i = 0; i <= n; i++) {
       var p = pointAt(i / n);
       if (keep && !keep(p)) { open = false; continue; }
-      var q = slabProject(cam, p);
+      var q = cutProject(fv, p);
       if (open) ctx.lineTo(q.x, q.y);
       else ctx.moveTo(q.x, q.y);
       open = true;
@@ -1587,239 +1687,251 @@
     ctx.stroke();
   }
 
-  function faceCircle(r, z) {
-    return function (t) {
-      var a = t * Math.PI * 2;
-      return [r * Math.cos(a), r * Math.sin(a), z || 0];
-    };
-  }
-
-  function addFacePath(cam, r, z) {
-    var at = faceCircle(r, z);
-    for (var i = 0; i < 240; i++) {
-      var q = slabProject(cam, at(i / 240));
-      if (i === 0) ctx.moveTo(q.x, q.y);
-      else ctx.lineTo(q.x, q.y);
+  /* Segment clipped to the sheet first, so a far end never reaches the
+     rasteriser as billions of pixels. */
+  function cutSegment(fv, p0, p1) {
+    var a = cutProject(fv, p0);
+    var b = cutProject(fv, p1);
+    var box = fv.box;
+    var t0 = 0;
+    var t1 = 1;
+    var dx = b.x - a.x;
+    var dy = b.y - a.y;
+    var tests = [
+      [-dx, a.x - (box.x - 4)], [dx, box.x + box.w + 4 - a.x],
+      [-dy, a.y - (box.y - 4)], [dy, box.y + box.h + 4 - a.y]
+    ];
+    for (var i = 0; i < 4; i++) {
+      var p = tests[i][0];
+      var q = tests[i][1];
+      if (p === 0) {
+        if (q < 0) return;
+      } else {
+        var t = q / p;
+        if (p < 0) t0 = Math.max(t0, t);
+        else t1 = Math.min(t1, t);
+      }
     }
-    ctx.closePath();
+    if (t1 <= t0) return;
+    strokeLine(a.x + dx * t0, a.y + dy * t0, a.x + dx * t1, a.y + dy * t1);
   }
 
-  function ringPoint(polar) {
-    var t = polar * Math.PI / 180;
+  function latitude(r, deg) {
+    var t = deg * Math.PI / 180;
     return function (u) {
       var l = u * Math.PI * 2;
-      return [Math.sin(t) * Math.cos(l), Math.cos(t), Math.sin(t) * Math.sin(l)];
+      return [r * Math.sin(t) * Math.sin(l), r * Math.cos(t), r * Math.sin(t) * Math.cos(l)];
     };
   }
 
-  function limbPoint(cam) {
-    var D = SLAB_DIST;
-    var c = norm3(cam.pos);
-    var rr = Math.sqrt(1 - 1 / (D * D));
-    var e1 = norm3(cross3(c, [0, 1, 0]));
-    var e2 = cross3(c, e1);
-    return function (t) {
-      var a = t * Math.PI * 2;
-      return [
-        c[0] / D + rr * (Math.cos(a) * e1[0] + Math.sin(a) * e2[0]),
-        c[1] / D + rr * (Math.cos(a) * e1[1] + Math.sin(a) * e2[1]),
-        c[2] / D + rr * (Math.cos(a) * e1[2] + Math.sin(a) * e2[2])
-      ];
+  function meridian(r, deg) {
+    var l = deg * Math.PI / 180;
+    return function (u) {
+      var t = (4 + u * 130) * Math.PI / 180;
+      return [r * Math.sin(t) * Math.sin(l), r * Math.cos(t), r * Math.sin(t) * Math.cos(l)];
     };
   }
 
-  function behindSlab(p) { return p[2] < -SLAB_T; }
-  function onRim(p) { return p[2] >= -SLAB_T && p[2] <= 0; }
-  function cutAway(p) { return p[2] > 0; }
-
-  /* Rings and outline of the sphere, for one depth zone. */
-  function drawSphereLines(cam, zone, ringPen, limbPen) {
-    var keep = function (p) { return zone(p) && facing(cam, p); };
-    ringPen();
-    for (var i = 0; i < SLAB_RINGS.length; i++) slabCurve(cam, ringPoint(SLAB_RINGS[i]), 360, keep);
-    limbPen();
-    slabCurve(cam, limbPoint(cam), 360, zone);
-  }
-
-  /* The back edge of the slab shows where the rim faces the camera and the
-     front face does not hide it. */
-  function backEdgeVisible(cam, p) {
-    if (!facing(cam, p)) return false;
-    var s = cam.pos[2] / (cam.pos[2] - p[2]);
-    var x = cam.pos[0] + s * (p[0] - cam.pos[0]);
-    var y = cam.pos[1] + s * (p[1] - cam.pos[1]);
-    return x * x + y * y > 1;
-  }
-
-  function drawSlabBody(cam) {
-    var rb = Math.sqrt(1 - SLAB_T * SLAB_T);
-    var front = faceCircle(1, 0);
-    var back = faceCircle(rb, -SLAB_T);
-    ctx.fillStyle = PAPER;
-    ctx.beginPath();
-    for (var i = 0; i < 240; i++) {
-      var a0 = slabProject(cam, front(i / 240));
-      var a1 = slabProject(cam, front((i + 1) / 240));
-      var b1 = slabProject(cam, back((i + 1) / 240));
-      var b0 = slabProject(cam, back(i / 240));
-      ctx.moveTo(a0.x, a0.y);
-      ctx.lineTo(a1.x, a1.y);
-      ctx.lineTo(b1.x, b1.y);
-      ctx.lineTo(b0.x, b0.y);
-      ctx.closePath();
-    }
-    ctx.fill();
-    ctx.beginPath();
-    addFacePath(cam, rb, -SLAB_T);
-    ctx.fill();
-    ctx.beginPath();
-    addFacePath(cam, 1, 0);
-    ctx.fill();
-  }
-
-  /* The flat view's patterns, tilted with the face. The region edges are
-     true perspective; only the pattern itself is the face's affine map at
-     the centre, which is close enough at this distance. */
-  function drawSlabMaterials(cam, v, tb) {
-    var flat = R * v.px;
-    var e = 0.01;
-    var p0 = slabProject(cam, [0, 0, 0]);
-    var px = slabProject(cam, [e, 0, 0]);
-    var py = slabProject(cam, [0, -e, 0]);
-    var a = (px.x - p0.x) / (e * flat);
-    var b = (px.y - p0.y) / (e * flat);
-    var c = (py.x - p0.x) / (e * flat);
-    var d = (py.y - p0.y) / (e * flat);
-    var tx = p0.x - (a * cam.cx + c * cam.cy);
-    var ty = p0.y - (b * cam.cx + d * cam.cy);
-    hatchZoom = zoomScale(v);
-    hatchAnchor = worldToScreen(v, 0, 0);
-
-    var labels = [];
-    var from = 0;
-    for (var i = 0; i < COLUMN.length; i++) {
-      var unit = COLUMN[i];
-      var d0 = from;
-      var d1 = unit.to;
-      from = d1;
-      if ((d1 - d0) * v.px < 18) continue;
-      ctx.save();
-      ctx.beginPath();
-      addFacePath(cam, 1 - d0 / R, 0);
-      if (d1 < R - 1) addFacePath(cam, 1 - d1 / R, 0);
-      ctx.clip("evenodd");
-      ctx.transform(a, b, c, d, tx, ty);
-      hatchInk();
-      var rp = (R - d0) * v.px * 1.8;
-      PATTERNS[unit.hatch]({ x: cam.cx - rp, y: cam.cy - rp, w: rp * 2, h: rp * 2 });
-      ctx.restore();
-      if ((d1 - d0) * v.px >= 22) labels.push({ name: unit.name, d0: d0, d1: d1 });
-    }
-
-    setFont(12);
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "center";
-    var used = [];
-    for (var j = 0; j < labels.length; j++) {
-      var item = labels[j];
-      var pt;
-      if (item.d1 >= R - 1) {
-        var under = slabProject(cam, [0, -(1 - item.d0 / R), 0]);
-        pt = { x: under.x, y: under.y + 16 };
-      } else {
-        var rm = (2 * R - item.d0 - item.d1) / (2 * R);
-        var ang = Math.PI * 0.78;
-        pt = slabProject(cam, [Math.cos(ang) * rm, Math.sin(ang) * rm, 0]);
-      }
-      if (inBlock(tb, pt.x, pt.y, 12)) continue;
-      var clash = false;
-      for (var k = 0; k < used.length; k++) {
-        if (Math.abs(used[k].y - pt.y) < 16 && Math.abs(used[k].x - pt.x) < 140) clash = true;
-      }
-      if (clash) continue;
-      var tw = ctx.measureText(item.name).width;
-      ctx.fillStyle = PAPER;
-      ctx.fillRect(pt.x - tw / 2 - 3, pt.y - 8, tw + 6, 16);
-      ctx.fillStyle = INK;
-      ctx.fillText(item.name, pt.x, pt.y);
-      used.push(pt);
+  function ringPen(s, faint) {
+    ctx.setLineDash(s === "dash" ? [7, 5] : []);
+    if (faint) {
+      ctx.strokeStyle = FAINT;
+      ctx.lineWidth = s === "ink" ? 0.75 : 0.6;
+    } else if (s === "ink") {
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 1.05;
+    } else if (s === "faint") {
+      ctx.strokeStyle = FAINT;
+      ctx.lineWidth = 0.6;
+    } else {
+      ctx.strokeStyle = MID;
+      ctx.lineWidth = 0.75;
     }
   }
 
-  function drawSlabLayers(cam, v) {
-    var kept = [R * v.px];
-    for (var i = 0; i < LAYERS.length; i++) {
-      var layer = LAYERS[i];
-      var radius = R - layer.depth;
-      if (layer.depth * v.px < 2.4) continue;
-      if (!layerSeparated(kept, radius, v.px)) continue;
-      var shell = layer.rank === "shell" && !layer.dash;
-      ctx.setLineDash(layer.dash ? [5, 4] : []);
-      ctx.lineWidth = shell ? 1.05 : 0.8;
-      ctx.strokeStyle = shell ? INK : MID;
-      slabCurve(cam, faceCircle(radius / R, 0), 240, null);
-    }
-    ctx.setLineDash([]);
+  function ringSteps(rPx) {
+    return Math.max(120, Math.ceil(3.2 * Math.sqrt(Math.max(1, rPx))));
   }
 
-  function drawSlabCenterlines(cam, v) {
-    var over = 1 + 22 / (R * v.px);
-    ctx.strokeStyle = MID;
-    ctx.lineWidth = 0.8;
-    ctx.setLineDash([18, 4, 3, 4]);
-    slabCurve(cam, function (t) { return [0, over - 2 * over * t, 0]; }, 1, null);
-    slabCurve(cam, function (t) { return [-over + 2 * over * t, 0, 0]; }, 1, null);
-    ctx.setLineDash([]);
-    ctx.lineWidth = 0.9;
-    var c = slabProject(cam, [0, 0, 0]);
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, 3.2, 0, Math.PI * 2);
-    ctx.stroke();
-    strokeLine(c.x - 7, c.y, c.x + 7, c.y);
-    strokeLine(c.x, c.y - 7, c.x, c.y + 7);
-  }
-
-  function drawSlabGlobe(v, tb, slab) {
-    var cam = slabCamera(v, slab);
-    var outer = ctx.globalAlpha;
-    var ghost = outer * cam.s;
+  /* Outline, rings and meridians of the sphere, and the rings of the next
+     unit where the cut has laid it bare. Left out once the globe is far
+     bigger than the sheet. */
+  function drawGlobeLines(fv) {
+    var pxR = R * fv.px;
+    if (pxR > 60000) return;
+    var rDig = digRadius();
+    var c = cutProject(fv, [0, 0, 0]);
+    ctx.save();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-
-    ctx.globalAlpha = ghost;
-    drawSphereLines(cam, behindSlab,
-      function () { ctx.strokeStyle = FAINT; ctx.lineWidth = 0.6; ctx.setLineDash([]); },
-      function () { ctx.strokeStyle = FAINT; ctx.lineWidth = 0.8; ctx.setLineDash([]); });
-    ctx.globalAlpha = outer;
-
-    drawSlabBody(cam);
-    drawSlabMaterials(cam, v, tb);
-    drawSlabLayers(cam, v);
-    drawSlabCenterlines(cam, v);
-
-    ctx.globalAlpha = ghost;
-    drawSphereLines(cam, onRim,
-      function () { ctx.strokeStyle = MID; ctx.lineWidth = 0.8; ctx.setLineDash([]); },
-      function () { ctx.strokeStyle = INK; ctx.lineWidth = 1.35; ctx.setLineDash([]); });
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1.1;
-    slabCurve(cam, faceCircle(Math.sqrt(1 - SLAB_T * SLAB_T), -SLAB_T), 360,
-      function (p) { return backEdgeVisible(cam, p); });
-    ctx.globalAlpha = outer;
-
+    var outside = function (p) {
+      return frontFacing(p) && !(inNotch(p) && rDig < R);
+    };
+    var i;
+    for (i = 0; i < RINGS.length; i++) {
+      ringPen(RINGS[i].s, false);
+      cutCurve(fv, latitude(R, RINGS[i].a), ringSteps(pxR * Math.sin(RINGS[i].a * Math.PI / 180)), outside);
+    }
+    ctx.strokeStyle = FAINT;
+    ctx.lineWidth = 0.55;
+    ctx.setLineDash([3, 5]);
+    for (i = 0; i < MERIDIANS.length; i++) cutCurve(fv, meridian(R, MERIDIANS[i]), 200, outside);
+    if (rDig > 0 && rDig < R) {
+      var bare = function (p) { return frontFacing(p) && inNotch(p); };
+      for (i = 0; i < RINGS.length; i++) {
+        if (RINGS[i].a >= 90) continue;
+        ringPen(RINGS[i].s, true);
+        cutCurve(fv, latitude(rDig, RINGS[i].a), ringSteps(rDig * fv.px * Math.sin(RINGS[i].a * Math.PI / 180)), bare);
+      }
+    }
+    ctx.setLineDash([]);
     ctx.strokeStyle = INK;
     ctx.lineWidth = 1.35;
-    slabCurve(cam, faceCircle(1, 0), 360, null);
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, pxR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
-    ctx.globalAlpha = ghost;
-    drawSphereLines(cam, cutAway,
-      function () { ctx.strokeStyle = FAINT; ctx.lineWidth = 0.6; ctx.setLineDash([4, 4]); },
-      function () { ctx.strokeStyle = FAINT; ctx.lineWidth = 0.8; ctx.setLineDash([4, 4]); });
+  /* Where the centre face meets the side faces, and the side faces meet
+     the floor. The rims are the section's own surface and base lines. */
+  function drawCutEdges(fv) {
+    var rDig = digRadius();
+    var h = FACE_HALF;
+    ctx.save();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.35;
+    ctx.lineCap = "round";
     ctx.setLineDash([]);
-    ctx.globalAlpha = outer;
+    var yTop = Math.sqrt(R * R - h * h);
+    var yBot = rDig > h ? Math.sqrt(rDig * rDig - h * h) : 0;
+    var along = function (r) {
+      if (r <= h) return 0;
+      return (-Math.SQRT2 * h + Math.sqrt(4 * r * r - 2 * h * h)) / 2;
+    };
+    var q0 = along(rDig);
+    var q1 = along(R);
+    for (var sg = -1; sg <= 1; sg += 2) {
+      cutSegment(fv, [sg * h, yTop, 0], [sg * h, yBot, 0]);
+      cutSegment(fv, [sg * (h + q0 / Math.SQRT2), 0, q0 / Math.SQRT2],
+        [sg * (h + q1 / Math.SQRT2), 0, q1 / Math.SQRT2]);
+    }
+    ctx.restore();
+  }
 
-    drawRadiusDim(v, tb, slabProject(cam, [0, 0, 0]), slabProject(cam, [1, 0, 0]));
-    drawLocator(v, tb, slabProject(cam, [0, 1, 0]));
+  function paperLabel(text, x, y, align) {
+    var tw = ctx.measureText(text).width;
+    var rx = align === "center" ? x - tw / 2 : align === "right" ? x - tw : x;
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(rx - 3, y - 8, tw + 6, 16);
+    ctx.fillStyle = INK;
+    ctx.textAlign = align;
+    ctx.fillText(text, x, y);
+  }
+
+  /* Unit names in their bands: on the left cut face while it shows beside
+     the centre face, on the centre face once that fills the sheet. Pocket
+     names where the pocket is. */
+  function drawUnitLabels(fv, tb) {
+    var box = fv.box;
+    var faceL = cutProject(fv, [-FACE_HALF, R, 0]).x;
+    var onFace = faceL - box.x < 90;
+    var m = pieceAffine(fv, pieceNamed(onFace ? "face" : "left"));
+    var targetX = onFace ? box.x + 18 : Math.max(box.x + 50, (box.x + faceL) / 2);
+    var xAt = (targetX - m.ox) / m.ax;
+    var depth = digDepth();
+    var items = [];
+    var from = 0;
+    var i;
+    for (i = 0; i < COLUMN.length && from < depth; i++) {
+      var d0 = from;
+      var d1 = COLUMN[i].to;
+      from = d1;
+      var rm = R - (d0 + d1) / 2;
+      var x = onFace ? clamp(xAt, -FACE_HALF, FACE_HALF) : Math.min(-FACE_HALF, Math.max(xAt, -rm * 0.64));
+      var p0 = applyAffine(m, x, Math.max(depthY(d0, x), fv.top));
+      var p1 = applyAffine(m, x, depthY(d1, x));
+      if (p1.y > box.y + box.h) p1 = { x: p1.x, y: box.y + box.h };
+      if (p0.y < box.y) p0 = { x: p0.x, y: box.y };
+      if (p1.y - p0.y < 22) continue;
+      items.push({ name: COLUMN[i].name, x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2, align: onFace ? "left" : "center" });
+    }
+    for (i = 0; i < POCKETS.length; i++) {
+      var pocket = POCKETS[i];
+      if (pocket.d1 > depth) continue;
+      var a = foldToScreen(fv, (pocket.x0 + pocket.x1) / 2, pocket.d0);
+      var b = foldToScreen(fv, (pocket.x0 + pocket.x1) / 2, pocket.d1);
+      if (b.y - a.y < 26) continue;
+      items.push({ name: pocket.name, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, align: "center" });
+    }
+    setFont(12);
+    ctx.textBaseline = "middle";
+    var used = [];
+    for (i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (it.y < box.y + 12 || it.y > box.y + box.h - 12) continue;
+      if (it.x < box.x + 8 || it.x > box.x + box.w - 8) continue;
+      if (inBlock(tb, it.x, it.y, 12)) continue;
+      var clash = false;
+      for (var j = 0; j < used.length; j++) {
+        if (Math.abs(used[j].y - it.y) < 16 && Math.abs(used[j].x - it.x) < 140) clash = true;
+      }
+      if (clash) continue;
+      paperLabel(it.name, it.x, it.y, it.align);
+      used.push(it);
+    }
+  }
+
+  /* The top of the next unit, a little in front of the foot of the centre face. */
+  function drawNextLabel(fv, tb) {
+    if (digUnit >= COLUMN.length - 1) return;
+    var rDig = digRadius();
+    var foot = cutProject(fv, [0, rDig, 0]);
+    var at = function (deg) {
+      var t = deg * Math.PI / 180;
+      return cutProject(fv, [0, rDig * Math.cos(t), rDig * Math.sin(t)]);
+    };
+    var lo = 0;
+    var hi = 50;
+    if (at(hi).y - foot.y < 34) lo = hi = 28;
+    for (var k = 0; k < 40 && hi - lo > 1e-9; k++) {
+      var mid = (lo + hi) / 2;
+      if (at(mid).y - foot.y < 34) lo = mid;
+      else hi = mid;
+    }
+    var p = at(hi);
+    var box = fv.box;
+    if (p.y < box.y + 12 || p.y > box.y + box.h - 12 || inBlock(tb, p.x, p.y, 12)) return;
+    setFont(12);
+    ctx.textBaseline = "middle";
+    paperLabel("next: " + COLUMN[digUnit + 1].name, p.x, p.y, "center");
+  }
+
+  function drawCutGlobe(v, fv, tb) {
+    drawGlobeLines(fv);
+    for (var i = 0; i < PIECES.length; i++) drawPiece(fv, PIECES[i]);
+    drawCutEdges(fv);
+    if (shaftReadable(fv)) {
+      ctx.save();
+      drawHandTools(fv, function (x) { return foldToScreen(fv, x, surfaceY(x)); });
+      ctx.restore();
+    }
+    drawCenterlines(fv);
+    drawUnitLabels(fv, tb);
+    drawNextLabel(fv, tb);
+    drawPatchDims(fv, tb);
+    drawLayerDims(fv, tb);
+    drawDepthScale(fv, tb);
+    drawRadiusDim(fv, tb);
+    drawLocator(fv, tb);
+  }
+
+  function digByName(name) {
+    var key = String(name || "").toLowerCase().replace(/[-_]/g, " ");
+    for (var i = 0; i < COLUMN.length; i++) {
+      if (COLUMN[i].name.toLowerCase() === key) return i;
+    }
+    return -1;
   }
 
   /* Dots per inch as the browser reports them. A match of 96 × devicePixelRatio
@@ -1919,6 +2031,8 @@
   var debugOpen = true;
   var debugHit = null;
   var machinesHit = null;
+  var digUpHit = null;
+  var digDownHit = null;
 
   function drawDebug(v) {
     var rows = debugOpen ? debugRows(v) : [];
@@ -1934,16 +2048,22 @@
     }
     var controlW = ctx.measureText("machines").width + ctx.measureText("open").width + 18;
     if (controlW > maxW) maxW = controlW;
+    var digText = "\u2039  " + COLUMN[digUnit].name + "  \u203a";
+    var digW = ctx.measureText("dug to").width + ctx.measureText("\u2039  lower mantle  \u203a").width + 18;
+    if (digW > maxW) maxW = digW;
     var pad = 8;
     var headH = 22;
     var rowH = 16;
     var controlH = 22;
     var w = Math.ceil(maxW + pad * 2);
-    var h = debugOpen ? headH + 4 + rows.length * rowH + controlH : headH;
+    var h = debugOpen ? headH + 4 + rows.length * rowH + controlH * 2 : headH;
     var x = 10;
     var y = 42;
     debugHit = { x: x, y: y, w: w, h: headH };
     machinesHit = debugOpen ? { x: x, y: y + h - controlH, w: w, h: controlH } : null;
+    var digY = y + h - controlH * 2;
+    digUpHit = debugOpen ? { x: x + w - pad - ctx.measureText(digText).width - 4, y: digY, w: 22, h: controlH } : null;
+    digDownHit = debugOpen ? { x: x + w - pad - 18, y: digY, w: 22, h: controlH } : null;
 
     ctx.fillStyle = PAPER;
     ctx.strokeStyle = MID;
@@ -1980,10 +2100,18 @@
     }
     ctx.strokeStyle = MID;
     ctx.beginPath();
+    ctx.moveTo(x, digY);
+    ctx.lineTo(x + w, digY);
     ctx.moveTo(x, machinesHit.y);
     ctx.lineTo(x + w, machinesHit.y);
     ctx.stroke();
     setFont(12, 500);
+    ctx.fillStyle = INK;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("dug to", x + pad, digY + controlH / 2);
+    ctx.textAlign = "right";
+    ctx.fillText(digText, x + w - pad, digY + controlH / 2);
     ctx.fillStyle = INK;
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
@@ -2336,7 +2464,6 @@
 
     drawCage(v);
     drawPump(v);
-    drawHandTools(v);
     ctx.restore();
   }
 
@@ -2375,9 +2502,10 @@
     wline(v, x, y - h * 0.55, x - 0.1, y - h * 0.55);
   }
 
-  function drawHandTools(v) {
-    var shovel = worldToScreen(v, -2.62, 0);
-    var pick = worldToScreen(v, -2.18, 0);
+  /* ground(x), when given, is where the surface at x lands on the screen. */
+  function drawHandTools(v, ground) {
+    var shovel = ground ? ground(-2.62) : worldToScreen(v, -2.62, 0);
+    var pick = ground ? ground(-2.18) : worldToScreen(v, -2.18, 0);
     var s = v.px;
     ctx.strokeStyle = INK;
     ctx.lineWidth = 1.1;
@@ -3648,9 +3776,7 @@
     var worldW = forced === null
       ? clamp(Math.pow(10, logW), closeWidth(), farWidth(aspect))
       : forced;
-    if (forced !== null) logW = Math.log10(worldW);
-    else logW = clamp(logW, Math.log10(closeWidth()), Math.log10(maxWidth(aspect)));
-    var slab = forced === null ? slabProgress(aspect) : 0;
+    logW = Math.log10(worldW);
     var v = viewOf(worldW);
     var tb = titleBlock(v.box);
 
@@ -3658,31 +3784,10 @@
     ctx.fillStyle = PAPER;
     ctx.fillRect(0, 0, cssW, cssH);
 
+    hatchZoom = zoomScale(v);
     ctx.save();
     clipSheet(v.box);
-    if (slab <= SLAB_FADE) {
-      drawMaterials(v, tb);
-      drawHatch(v);
-      drawLayers(v);
-      drawPitAndSurfaceCut(v);
-      drawWorks(v);
-      drawCenterlines(v);
-      drawPatchDims(v, tb);
-      drawLayerDims(v, tb);
-      drawDepthScale(v, tb);
-      drawRadiusDim(v, tb);
-      drawLocator(v, tb);
-    }
-    if (slab > 0) {
-      var fade = Math.min(1, slab / SLAB_FADE);
-      ctx.globalAlpha = fade;
-      if (fade < 1) {
-        ctx.fillStyle = PAPER;
-        ctx.fillRect(v.box.x, v.box.y, v.box.w, v.box.h);
-      }
-      drawSlabGlobe(v, tb, slab);
-      ctx.globalAlpha = 1;
-    }
+    drawCutGlobe(v, faceView(v), tb);
     ctx.restore();
 
     drawFrame(v, tb);
@@ -3720,12 +3825,14 @@
      slice is the centre. */
   function zoomAt(dy, screenY) {
     var before = viewOf(currentWorldW());
+    var ay = cutAnchor(before.box);
+    screenY = ay + (screenY - ay) / COS_E;
     var depth = before.top + (screenY - before.box.y) / before.px;
     lock = null;
     logW += dy * 0.00115;
     var aspect = before.box.w / Math.max(1, before.box.h);
-    logW = clamp(logW, Math.log10(closeWidth()), Math.log10(maxWidth(aspect)));
     var worldW = clamp(Math.pow(10, logW), closeWidth(), farWidth(aspect));
+    logW = Math.log10(worldW);
     var worldH = worldW / aspect;
     var top0 = shallowTop(worldH, before.box);
     var top1 = R - worldH;
@@ -3774,6 +3881,8 @@
     var q = new URLSearchParams(location.search);
     var zoom = (q.get("zoom") || "").toLowerCase();
     var hash = (location.hash || "").replace("#", "").toLowerCase();
+    var dig = digByName(q.get("dig"));
+    if (dig >= 0) digUnit = dig;
     var w = q.get("w");
     if (w && isFinite(Number(w)) && Number(w) > 0) {
       lock = null;
@@ -3834,7 +3943,8 @@
       if (stripGeom) stripHot = stripIndexAt(stripGeom, p.y);
       return;
     }
-    if (pointerOnDebug(p.x, p.y) || hitRect(machinesHit, p.x, p.y) || pointerOnTheme(p.x, p.y)) {
+    if (pointerOnDebug(p.x, p.y) || hitRect(machinesHit, p.x, p.y) || pointerOnTheme(p.x, p.y) ||
+      hitRect(digUpHit, p.x, p.y) || hitRect(digDownHit, p.x, p.y)) {
       canvas.style.cursor = "pointer";
       return;
     }
@@ -3857,6 +3967,12 @@
     }
     if (hitRect(machinesHit, p.x, p.y)) {
       modalOpen = true;
+      event.preventDefault();
+      return;
+    }
+    if (hitRect(digUpHit, p.x, p.y) || hitRect(digDownHit, p.x, p.y)) {
+      var step = hitRect(digUpHit, p.x, p.y) ? -1 : 1;
+      digUnit = clamp(digUnit + step, 0, COLUMN.length - 1);
       event.preventDefault();
       return;
     }
@@ -3904,6 +4020,11 @@
     preset: function (name) {
       applyPreset(name);
     },
+    dig: function (name) {
+      var i = typeof name === "number" ? name : digByName(name);
+      if (i >= 0 && i < COLUMN.length) digUnit = i;
+      return COLUMN[digUnit].name;
+    },
     fps: function () {
       return fpsLabel;
     },
@@ -3925,7 +4046,7 @@
         top: v.top,
         scroll: scrollT,
         strip: stripGeom,
-        slab: forced === null ? slabProgress(aspect) : 0
+        dug: COLUMN[digUnit].name
       };
     }
   };
