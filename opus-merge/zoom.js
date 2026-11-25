@@ -5,7 +5,8 @@
    at 45° either side. The cut goes down to the base of the unit being
    dug. Hold Alt and the wheel scrolls the section. Keys 1, 2 and 3 jump
    to the soils, the crust, and the globe. ?dig=granite opens the cut at
-   that unit; the debug panel steps it. */
+   that unit and ?face=500 makes the centre face 500 m wide; the debug
+   panel sets both, and the wheel speed. */
 
 (function () {
   "use strict";
@@ -361,14 +362,29 @@
     ctx.stroke();
   }
 
+  /* The plane being drawn passes SEC.d from the centre, nearest it at flat
+     x = SEC.x. A shell of radius r cuts it in a circle of secRadius(r).
+     Zero for a plane through the centre. */
+  var SEC = { d: 0, x: 0 };
+
+  function secRadius(r) {
+    if (!SEC.d) return r;
+    return Math.sqrt(Math.max(0, r * r - SEC.d * SEC.d));
+  }
+
+  function secCenter(v) {
+    return worldToScreen(v, SEC.x, R);
+  }
+
   function drawShell(v, radius, skip) {
+    radius = secRadius(radius);
     if (radius <= 1) return;
     var px = radius * v.px;
-    var c = worldToScreen(v, 0, R);
+    var c = secCenter(v);
     var far = px > 120000 || c.y > v.box.y + v.box.h + px;
     if (far) {
-      var xLeft = v.left;
-      var xRight = v.left + v.worldW;
+      var xLeft = v.left - SEC.x;
+      var xRight = v.left + v.worldW - SEC.x;
       var spanL = radius * radius - xLeft * xLeft;
       var spanR = radius * radius - xRight * xRight;
       if (spanL <= 0 || spanR <= 0) return;
@@ -393,7 +409,7 @@
     var prevInside = false;
     for (var i = 0; i <= n; i++) {
       var x = x0 + (x1 - x0) * (i / n);
-      if (x < -limit || x > limit) continue;
+      if (x - SEC.x < -limit || x - SEC.x > limit) continue;
       var inside = !!(skip && x > skip[0] && x < skip[1]);
       if (inside) {
         if (started) {
@@ -405,7 +421,7 @@
         prevInside = true;
         continue;
       }
-      var y = R - Math.sqrt(radius * radius - x * x);
+      var y = R - Math.sqrt(radius * radius - (x - SEC.x) * (x - SEC.x));
       var p = worldToScreen(v, x, y);
       if (!started) {
         if (prevInside) {
@@ -468,17 +484,17 @@
 
 
   function depthY(depth, x) {
-    var r = R - depth;
+    var r = secRadius(R - depth);
     if (r <= 0) return R;
-    var under = r * r - x * x;
+    var under = r * r - (x - SEC.x) * (x - SEC.x);
     if (under <= 0) return R;
     return R - Math.sqrt(under);
   }
 
   function ringMode(v, d0) {
-    var px = (R - d0) * v.px;
+    var px = secRadius(R - d0) * v.px;
     if (px > 5000 || px < 8) return false;
-    var c = worldToScreen(v, 0, R);
+    var c = secCenter(v);
     return c.y > v.box.y - 30 && c.y < v.box.y + v.box.h + 30;
   }
 
@@ -491,9 +507,9 @@
   }
 
   function clipRing(v, d0, d1) {
-    var c = worldToScreen(v, 0, R);
-    var px0 = Math.max(0.5, (R - d0) * v.px);
-    var px1 = Math.max(0, (R - d1) * v.px);
+    var c = secCenter(v);
+    var px0 = Math.max(0.5, secRadius(R - d0) * v.px);
+    var px1 = Math.max(0, secRadius(R - d1) * v.px);
     ctx.beginPath();
     ctx.arc(c.x, c.y, px0, 0, Math.PI * 2, false);
     if (px1 > 0.8) ctx.arc(c.x, c.y, px1, 0, Math.PI * 2, true);
@@ -503,7 +519,7 @@
   /* Hatches stay inside the earth. A huge radius is drawn as the surface
      arc across the view; the disk itself is used once it fits. */
   function clipBelowSurface(v) {
-    var ySurf = depthY(0, 0);
+    var ySurf = depthY(0, SEC.x);
     var view0 = v.top;
     var view1 = v.top + v.worldH;
     if (ySurf > view1 + v.worldH * 0.05) {
@@ -516,8 +532,8 @@
        that reaches up to the surface carries coordinates of billions of
        pixels and the rasteriser drops frames. The sheet clip is enough. */
     if (ySurf < view0 - 0.5 && R * v.px >= 800000) return;
-    var c = worldToScreen(v, 0, R);
-    var rad = R * v.px;
+    var c = secCenter(v);
+    var rad = secRadius(R) * v.px;
     ctx.beginPath();
     if (rad < 800000) {
       ctx.arc(c.x, c.y, Math.max(1, rad), 0, Math.PI * 2);
@@ -584,8 +600,8 @@
   }
 
   function ringBox(v, d0) {
-    var c = worldToScreen(v, 0, R);
-    var px = (R - d0) * v.px;
+    var c = secCenter(v);
+    var px = secRadius(R - d0) * v.px;
     var xA = Math.max(v.box.x, c.x - px);
     var yA = Math.max(v.box.y, c.y - px);
     var xB = Math.min(v.box.x + v.box.w, c.x + px);
@@ -1254,6 +1270,10 @@
     return mant * pow;
   }
 
+  /* The depth scale runs down the left edge of the sheet; names in the
+     drawing keep clear of this much of it. */
+  var DEPTH_SCALE_W = 104;
+
   function drawDepthScale(v, tb) {
     var center = worldToScreen(v, 0, R);
     var surface = worldToScreen(v, 0, 0);
@@ -1263,9 +1283,7 @@
 
     var bottomWorld = Math.min(v.top + v.worldH, R);
     if (bottomWorld <= 0) return;
-    var origin = worldToScreen(v, 0, 0);
-    var x = origin.x + Math.max(58, (PATCH / 2) * v.px + 28);
-    if (x > v.box.x + v.box.w - 78) x = origin.x - Math.max(72, (PATCH / 2) * v.px + 54);
+    var x = v.box.x + 12;
 
     var yTop = worldToScreen(v, 0, Math.max(0, v.top)).y;
     var yBot = worldToScreen(v, 0, bottomWorld).y;
@@ -1287,7 +1305,7 @@
       if (depth < -step * 0.01 || depth > bottomWorld + step * 0.01) return;
       var y = worldToScreen(v, 0, depth).y;
       if (y < v.box.y + 10 || y > v.box.y + v.box.h - 10) return;
-      if (inBlock(tb, x, y, 12)) return;
+      if (inBlock(tb, x, y, 12) || inBlock(debugBox, x, y, 10)) return;
       labels.push({ y: y, text: text, depth: depth, named: !!named });
     }
 
@@ -1304,7 +1322,8 @@
       ctx.strokeStyle = isMajor ? MID : HAIR;
       ctx.lineWidth = isMajor ? 0.9 : 0.6;
       var len = isMajor ? 8 : 4;
-      strokeLine(x - len, y, x, y);
+      if (inBlock(debugBox, x, y, 4)) continue;
+      strokeLine(x, y, x + len, y);
       if (isMajor) pushLabel(d, d === 0 ? "0" : formatLength(d), false);
     }
 
@@ -1335,7 +1354,7 @@
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     setFont(11);
-    for (i = 0; i < kept.length; i++) ctx.fillText(kept[i].text, x + 8, kept[i].y);
+    for (i = 0; i < kept.length; i++) ctx.fillText(kept[i].text, x + 12, kept[i].y);
   }
 
   function drawCenterlines(v) {
@@ -1463,7 +1482,7 @@
   /* ---------- cut globe ----------
      Parallel projection from above the front, at the angle of the
      sphere-opus sheet. The top front quarter of the sphere is cut away as
-     a \_/ notch: the centre face is one patch wide, holds the shaft and
+     a \_/ notch: the centre face is FACE_HALF * 2 wide, holds the shaft and
      faces the camera; the camera height only squashes it. Either side a
      face runs off at 45°, and the notch floor is the equator. Past the
      edges of the centre face the flat section is folded onto the side
@@ -1477,6 +1496,8 @@
   var COS_E = Math.cos(CUT_ELEV);
   var SIN_E = Math.sin(CUT_ELEV);
   var FACE_HALF = PATCH / 2;
+  var FACE_MIN = PATCH;
+  var FACE_MAX = 1000000;
   var digUnit = COLUMN.length - 1;
 
   /* Section rings by angle from the pole, as on the sphere-opus sheet. */
@@ -1526,31 +1547,55 @@
   }
 
   /* Flat section coordinates (x across, y down from the pole) to the cut.
-     Folding keeps the rings within half a metre of the sphere. */
+     A side face is the section folded at the edge of the centre face. It
+     passes FACE_HALF / √2 from the centre, so it is drawn with that offset
+     (see SEC) and its rings stay true to the sphere at any face width. */
   var PIECES = [
     {
-      name: "floor", x0: -FACE_HALF - R, x1: FACE_HALF + R, y0: 0, y1: R, wedge: true,
+      name: "floor", wedge: true,
       to3: function (x, y) { return [x, 0, R - y]; }
     },
     {
-      name: "left", x0: -R, x1: -FACE_HALF, y0: -R, y1: R,
+      name: "left", side: -1,
       to3: function (x, y) {
         var s = (-x - FACE_HALF) / Math.SQRT2;
         return [-FACE_HALF - s, R - y, s];
       }
     },
     {
-      name: "right", x0: FACE_HALF, x1: R, y0: -R, y1: R,
+      name: "right", side: 1,
       to3: function (x, y) {
         var s = (x - FACE_HALF) / Math.SQRT2;
         return [FACE_HALF + s, R - y, s];
       }
     },
     {
-      name: "face", x0: -FACE_HALF, x1: FACE_HALF, y0: -R, y1: R,
+      name: "face",
       to3: function (x, y) { return [x, R - y, 0]; }
     }
   ];
+
+  /* Flat extent of the piece, and the section offset it is drawn with. */
+  function pieceFrame(piece) {
+    var h = FACE_HALF;
+    if (piece.wedge) return { x0: -h - R, x1: h + R, y0: 0, y1: R, d: 0, x: 0 };
+    if (!piece.side) return { x0: -h, x1: h, y0: -R, y1: R, d: 0, x: 0 };
+    var foot = h * (1 - Math.SQRT1_2);
+    return piece.side > 0
+      ? { x0: h, x1: h + R, y0: -R, y1: R, d: h * Math.SQRT1_2, x: foot }
+      : { x0: -h - R, x1: -h, y0: -R, y1: R, d: h * Math.SQRT1_2, x: -foot };
+  }
+
+  function enterSection(piece) {
+    var f = pieceFrame(piece);
+    SEC.d = f.d;
+    SEC.x = f.x;
+  }
+
+  function leaveSection() {
+    SEC.d = 0;
+    SEC.x = 0;
+  }
 
   function pieceNamed(name) {
     for (var i = 0; i < PIECES.length; i++) if (PIECES[i].name === name) return PIECES[i];
@@ -1600,10 +1645,11 @@
       y0 = Math.min(y0, y);
       y1 = Math.max(y1, y);
     }
-    x0 = Math.max(x0, piece.x0);
-    x1 = Math.min(x1, piece.x1);
-    y0 = Math.max(y0, piece.y0);
-    y1 = Math.min(y1, piece.y1);
+    var f = pieceFrame(piece);
+    x0 = Math.max(x0, f.x0);
+    x1 = Math.min(x1, f.x1);
+    y0 = Math.max(y0, f.y0);
+    y1 = Math.min(y1, f.y1);
     if (!(x1 > x0) || !(y1 > y0)) return null;
     return {
       box: { x: box.x, y: box.y, w: (x1 - x0) * fv.px, h: (y1 - y0) * fv.px },
@@ -1654,8 +1700,10 @@
     ctx.save();
     enterPiece(vp, m);
     clipPiece(vp, piece);
+    enterSection(piece);
     paintUnits(vp, depth, !piece.wedge);
     drawLayerLines(vp, depth, face);
+    leaveSection();
     if (face) {
       drawHatch(vp);
       drawPitAndSurfaceCut(vp);
@@ -1861,9 +1909,11 @@
   function drawUnitLabels(fv, tb) {
     var box = fv.box;
     var faceL = cutProject(fv, [-FACE_HALF, R, 0]).x;
-    var onFace = faceL - box.x < 90;
-    var m = pieceAffine(fv, pieceNamed(onFace ? "face" : "left"));
-    var targetX = onFace ? box.x + 18 : Math.max(box.x + 50, (box.x + faceL) / 2);
+    var onFace = faceL - box.x < 200;
+    var piece = pieceNamed(onFace ? "face" : "left");
+    var m = pieceAffine(fv, piece);
+    enterSection(piece);
+    var targetX = onFace ? box.x + DEPTH_SCALE_W + 18 : Math.max(box.x + DEPTH_SCALE_W + 40, (box.x + DEPTH_SCALE_W + faceL) / 2);
     var xAt = (targetX - m.ox) / m.ax;
     var depth = digDepth();
     var items = [];
@@ -1882,6 +1932,7 @@
       if (p1.y - p0.y < 22) continue;
       items.push({ name: COLUMN[i].name, x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2, align: onFace ? "left" : "center" });
     }
+    leaveSection();
     for (i = 0; i < POCKETS.length; i++) {
       var pocket = POCKETS[i];
       if (pocket.d1 > depth) continue;
@@ -1937,11 +1988,6 @@
     drawGlobeLines(fv);
     for (var i = 0; i < PIECES.length; i++) drawPiece(fv, PIECES[i]);
     drawCutEdges(fv);
-    if (shaftReadable(fv)) {
-      ctx.save();
-      drawHandTools(fv, function (x) { return foldToScreen(fv, x, surfaceY(x)); });
-      ctx.restore();
-    }
     drawCenterlines(fv);
     drawUnitLabels(fv, tb);
     drawNextLabel(fv, tb);
@@ -2055,10 +2101,47 @@
   }
 
   var debugOpen = true;
+  var debugBox = { x: 0, y: 0, w: 0, h: 0 };
   var debugHit = null;
   var machinesHit = null;
   var digUpHit = null;
   var digDownHit = null;
+  var wheelSpeed = 1;
+
+  /* Log sliders in the debug panel. */
+  var SLIDERS = [
+    {
+      label: "2D width", min: FACE_MIN, max: FACE_MAX,
+      get: function () { return FACE_HALF * 2; },
+      set: function (w) { FACE_HALF = w / 2; },
+      text: function (w) { return formatLength(w); }
+    },
+    {
+      label: "wheel speed", min: 0.25, max: 4,
+      get: function () { return wheelSpeed; },
+      set: function (k) { wheelSpeed = k; },
+      text: function (k) { return trimNum(k.toFixed(2)) + "\u00d7"; }
+    }
+  ];
+  var sliderHits = [];
+  var sliderDrag = null;
+
+  function sliderT(sl) {
+    return Math.log(sl.get() / sl.min) / Math.log(sl.max / sl.min);
+  }
+
+  function slideTo(hit, x) {
+    var t = clamp((x - hit.x0) / Math.max(1, hit.x1 - hit.x0), 0, 1);
+    hit.slider.set(hit.slider.min * Math.pow(hit.slider.max / hit.slider.min, t));
+  }
+
+  function sliderAt(x, y) {
+    for (var i = 0; i < sliderHits.length; i++) {
+      var g = sliderHits[i];
+      if (x >= g.x0 - 8 && x <= g.x1 + 8 && y >= g.y && y <= g.y + g.h) return g;
+    }
+    return null;
+  }
 
   function drawDebug(v) {
     var rows = debugOpen ? debugRows(v) : [];
@@ -2081,8 +2164,9 @@
     var headH = 22;
     var rowH = 16;
     var controlH = 22;
+    var sliderH = 34;
     var w = Math.ceil(maxW + pad * 2);
-    var h = debugOpen ? headH + 4 + rows.length * rowH + controlH * 2 : headH;
+    var h = debugOpen ? headH + 4 + rows.length * rowH + SLIDERS.length * sliderH + controlH * 2 : headH;
     var x = 10;
     var y = 42;
     debugHit = { x: x, y: y, w: w, h: headH };
@@ -2090,6 +2174,7 @@
     var digY = y + h - controlH * 2;
     digUpHit = debugOpen ? { x: x + w - pad - ctx.measureText(digText).width - 4, y: digY, w: 22, h: controlH } : null;
     digDownHit = debugOpen ? { x: x + w - pad - 18, y: digY, w: 22, h: controlH } : null;
+    debugBox = { x: x, y: y, w: w, h: h };
 
     ctx.fillStyle = PAPER;
     ctx.strokeStyle = MID;
@@ -2104,6 +2189,7 @@
     setFont(12, 500);
     ctx.fillText(header, x + pad, y + headH / 2);
     if (!debugOpen) {
+      sliderHits = [];
       ctx.restore();
       return;
     }
@@ -2123,6 +2209,42 @@
       ctx.textAlign = "right";
       ctx.fillText(rows[i][1], x + w - pad, yy);
       yy += rowH;
+    }
+    sliderHits = [];
+    var sy = y + headH + 4 + rows.length * rowH;
+    for (i = 0; i < SLIDERS.length; i++) {
+      var sl = SLIDERS[i];
+      var top = sy + i * sliderH;
+      ctx.strokeStyle = MID;
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x + w, top);
+      ctx.stroke();
+      setFont(12, 500);
+      ctx.fillStyle = INK;
+      ctx.textAlign = "left";
+      ctx.fillText(sl.label, x + pad, top + 11);
+      setFont(12);
+      ctx.textAlign = "right";
+      ctx.fillText(sl.text(sl.get()), x + w - pad, top + 11);
+      var x0 = x + pad + 4;
+      var x1 = x + w - pad - 4;
+      var ty = top + 25;
+      var kx = x0 + (x1 - x0) * clamp(sliderT(sl), 0, 1);
+      ctx.strokeStyle = FAINT;
+      ctx.lineWidth = 1;
+      strokeLine(x0, ty, x1, ty);
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 1.4;
+      strokeLine(x0, ty, kx, ty);
+      ctx.fillStyle = PAPER;
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.arc(kx, ty, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.lineWidth = 0.8;
+      sliderHits.push({ slider: sl, x0: x0, x1: x1, y: top + 16, h: sliderH - 16 });
     }
     ctx.strokeStyle = MID;
     ctx.beginPath();
@@ -2420,7 +2542,8 @@
   }
 
   /* A timbered shaft in the patch, from the surface into the gravel.
-     Dropped once it would be a speck, same idea as the layer dimensions. */
+     Too narrow for its timbers it is only its outline, then a line, and
+     it is dropped once that line would be a speck. */
   var SHAFT = { x0: 0.66, x1: 1.36, y0: 0, y1: 6.2 };
   var CHAMBER = { x0: 1.36, x1: 1.74, y0: 1.76, y1: 2.42 };
 
@@ -2435,8 +2558,29 @@
     strokeLine(a.x, a.y, b.x, b.y);
   }
 
+  function drawShaftMark(v) {
+    var a = worldToScreen(v, SHAFT.x0, SHAFT.y0);
+    var b = worldToScreen(v, SHAFT.x1, SHAFT.y1);
+    if (b.y - a.y < 3) return;
+    ctx.save();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    if (b.x - a.x >= 3) {
+      ctx.fillStyle = PAPER;
+      ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    } else {
+      strokeLine((a.x + b.x) / 2, a.y, (a.x + b.x) / 2, b.y);
+    }
+    ctx.restore();
+  }
+
   function drawWorks(v) {
-    if (!shaftReadable(v)) return;
+    if (!shaftReadable(v)) {
+      drawShaftMark(v);
+      return;
+    }
     ctx.save();
     ctx.fillStyle = PAPER;
     ctx.strokeStyle = INK;
@@ -2526,28 +2670,6 @@
     ctx.arc(c.x, c.y, Math.max(1.5, r), 0, Math.PI * 2);
     ctx.stroke();
     wline(v, x, y - h * 0.55, x - 0.1, y - h * 0.55);
-  }
-
-  /* ground(x), when given, is where the surface at x lands on the screen. */
-  function drawHandTools(v, ground) {
-    var shovel = ground ? ground(-2.62) : worldToScreen(v, -2.62, 0);
-    var pick = ground ? ground(-2.18) : worldToScreen(v, -2.18, 0);
-    var s = v.px;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1.1;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    strokeLine(shovel.x, shovel.y - 0.78 * s, shovel.x, shovel.y - 0.22 * s);
-    ctx.beginPath();
-    ctx.moveTo(shovel.x - 0.11 * s, shovel.y - 0.22 * s);
-    ctx.lineTo(shovel.x - 0.13 * s, shovel.y - 0.04 * s);
-    ctx.lineTo(shovel.x + 0.13 * s, shovel.y - 0.04 * s);
-    ctx.lineTo(shovel.x + 0.11 * s, shovel.y - 0.22 * s);
-    ctx.stroke();
-    strokeLine(shovel.x - 0.06 * s, shovel.y - 0.78 * s, shovel.x + 0.06 * s, shovel.y - 0.78 * s);
-    strokeLine(pick.x - 0.22 * s, pick.y - 0.46 * s, pick.x, pick.y - 0.62 * s);
-    strokeLine(pick.x, pick.y - 0.62 * s, pick.x + 0.24 * s, pick.y - 0.44 * s);
-    strokeLine(pick.x, pick.y - 0.58 * s, pick.x, pick.y - 0.04 * s);
   }
 
   var modalOpen = false;
@@ -3909,6 +4031,8 @@
     var hash = (location.hash || "").replace("#", "").toLowerCase();
     var dig = digByName(q.get("dig"));
     if (dig >= 0) digUnit = dig;
+    var face = Number(q.get("face"));
+    if (face > 0) FACE_HALF = clamp(face, FACE_MIN, FACE_MAX) / 2;
     var w = q.get("w");
     if (w && isFinite(Number(w)) && Number(w) > 0) {
       lock = null;
@@ -3948,6 +4072,7 @@
     var dy = event.deltaY;
     if (event.deltaMode === 1) dy *= 16;
     else if (event.deltaMode === 2) dy *= 400;
+    dy *= wheelSpeed;
     pointerY = event.clientY;
     if (event.altKey) scrollByWheel(dy);
     else zoomBy(dy);
@@ -3964,9 +4089,17 @@
       canvas.style.cursor = hitRect(modalClose, p.x, p.y) ? "pointer" : "default";
       return;
     }
+    if (sliderDrag) {
+      slideTo(sliderDrag, p.x);
+      return;
+    }
     if (stripDrag) {
       scrollFromPointer(p.y);
       if (stripGeom) stripHot = stripIndexAt(stripGeom, p.y);
+      return;
+    }
+    if (sliderAt(p.x, p.y)) {
+      canvas.style.cursor = "ew-resize";
       return;
     }
     if (pointerOnDebug(p.x, p.y) || hitRect(machinesHit, p.x, p.y) || pointerOnTheme(p.x, p.y) ||
@@ -3996,6 +4129,13 @@
       event.preventDefault();
       return;
     }
+    var hit = debugOpen ? sliderAt(p.x, p.y) : null;
+    if (hit) {
+      sliderDrag = hit;
+      slideTo(hit, p.x);
+      event.preventDefault();
+      return;
+    }
     if (hitRect(digUpHit, p.x, p.y) || hitRect(digDownHit, p.x, p.y)) {
       var step = hitRect(digUpHit, p.x, p.y) ? -1 : 1;
       digUnit = clamp(digUnit + step, 0, COLUMN.length - 1);
@@ -4022,6 +4162,7 @@
 
   window.addEventListener("mouseup", function () {
     stripDrag = false;
+    sliderDrag = null;
   });
 
   window.addEventListener("keydown", function (event) {
