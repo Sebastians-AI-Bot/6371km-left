@@ -10,7 +10,7 @@
   var STONE = S.STONE, WATER = S.WATER, OIL = S.OIL;
   var LOOSE = S.LOOSE, WET = S.WET, CRACK = S.CRACK;
 
-  var PAPER = "#f3f0e8", INK = "#3a4654", MID = "#5c6c7c", FAINT = "#8e9bab", WATER_INK = "#46698f";
+  var PAPER = "#f3f0e8", INK = "#3a4654", MID = "#5c6c7c", FAINT = "#8e9bab", WATER_INK = "#46698f", WET_FILL = "#d5e1ea";
 
   function pack(r, g, b, a) {
     return ((a << 24) | (Math.min(255, b) << 16) | (Math.min(255, g) << 8) | Math.min(255, r)) >>> 0;
@@ -20,6 +20,7 @@
     return pack((v >> 16) & 255, (v >> 8) & 255, v & 255, 255);
   }
   var P_INK = packHex(INK), P_MID = packHex(MID), P_FAINT = packHex(FAINT), P_WATER = packHex(WATER_INK);
+  var P_WET = packHex(WET_FILL);
 
   var canvas = document.getElementById("sheet");
   var ctx = canvas.getContext("2d");
@@ -34,7 +35,7 @@
     return { cv: cv, ctx: c, img: img, px: new Uint32Array(img.data.buffer) };
   }
   var lines = layer();
-  var fluids = layer();
+  var fills = layer();
 
   var toolCm = 10;
   var paused = false;
@@ -72,7 +73,7 @@
     if (f & CRACK) return P_INK;
     if ((f & LOOSE) && m !== SAND) return shade[i] < 90 ? P_MID : 0;
     if (m === SAND) {
-      if (f & WET) return shade[i] < 24 ? P_WATER : 0;
+      if (f & WET) return shade[i] < 24 ? P_WATER : P_WET;
       return shade[i] < 14 ? P_FAINT : 0;
     }
     if (m === TOPSOIL) return shade[i] < 22 ? P_MID : 0;
@@ -92,18 +93,18 @@
   }
 
   function paintRect(x0, y0, x1, y1) {
-    var lp = lines.px, fp = fluids.px;
+    var lp = lines.px, fp = fills.px;
     for (var y = y0; y <= y1; y++) {
       var row = y * W;
       for (var x = x0; x <= x1; x++) {
         var i = row + x;
         lp[i] = lineColor(i, x, y);
-        fp[i] = isFluid(mat[i]) ? lp[i] : 0;
+        fp[i] = isFluid(mat[i]) ? lp[i] : (flag[i] & WET) ? P_WET : 0;
       }
     }
     var w = x1 - x0 + 1, h = y1 - y0 + 1;
     lines.ctx.putImageData(lines.img, 0, 0, x0, y0, w, h);
-    fluids.ctx.putImageData(fluids.img, 0, 0, x0, y0, w, h);
+    fills.ctx.putImageData(fills.img, 0, 0, x0, y0, w, h);
   }
 
   function recolor() {
@@ -170,9 +171,10 @@
   }
 
   /* Close up the line look is stroked per cell, so lines stay one pixel
-     thin however far in the view goes. Fluids are filled underneath. */
+     thin however far in the view goes. Fluids and wet ground are filled
+     underneath. */
   function strokeLines() {
-    blit(fluids);
+    blit(fills);
     var v = visible();
     var vx0 = v.x0, vx1 = v.x1;
     var ink = new Path2D(), mid = new Path2D();

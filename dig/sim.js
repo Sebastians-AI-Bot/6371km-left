@@ -180,10 +180,11 @@ var DIG = (function () {
   var SAND_PACE = 0.25;
   /* Everything else that falls moves at this share of its full speed. */
   var REST_PACE = 0.5;
+  var TOPSOIL_PACE = 0.35;
 
   function grain(i, x, y) {
     var sand = mat[i] === SAND;
-    var wait = Math.random() > (sand ? SAND_PACE : REST_PACE);
+    var wait = Math.random() > (sand ? SAND_PACE : mat[i] === TOPSOIL ? TOPSOIL_PACE : REST_PACE);
     if (y + 1 < H) {
       var j = i + W;
       var t = mat[j];
@@ -224,7 +225,23 @@ var DIG = (function () {
         }
       }
     }
-    if ((flag[i] & WET) && y >= TABLE) seep(i, x, y);
+    if (y < TABLE) return;
+    if (flag[i] & WET) seep(i, x, y);
+    else if (sand && soaked(i, x, y)) {
+      flag[i] |= WET;
+      mark(x, y);
+    }
+  }
+
+  /* Dry sand that comes to rest under the table soaks up water from a wet
+     or flooded neighbour. */
+  function soaked(i, x, y) {
+    var n = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y < H - 1 ? i + W : -1, i - W];
+    for (var k = 0; k < 4; k++) {
+      var j = n[k];
+      if (j >= 0 && (mat[j] === WATER || (mat[j] === SAND && (flag[j] & WET)))) return true;
+    }
+    return false;
   }
 
   /* Wet sand under the table lets water into open cells that are below
@@ -252,6 +269,8 @@ var DIG = (function () {
     }
     if (open) mark(x, y);
   }
+
+  var PRESS = 60;
 
   function fluid(i, x, y, m) {
     var slow = m === OIL;
@@ -281,14 +300,13 @@ var DIG = (function () {
         }
       }
     }
-    /* Sideways only toward a drop, or when pushed by fluid behind or above,
-       so a settled pool goes quiet. */
+    /* Sideways only toward a drop, or when fluid above presses down. A cell
+       beside fluid at the same level has no head to drive it, so a partial
+       top layer rests instead of sliding to and fro. */
     var reach = slow ? 1 : 4;
-    var pushedUp = y > 0 && isFluid(mat[i - W]);
+    var pushed = y > 0 && isFluid(mat[i - W]);
     var dir = ((y + st) & 1) ? 1 : -1;
     for (var s = 0; s < 2; s++, dir = -dir) {
-      var bx = x - dir;
-      var pushed = pushedUp || (bx >= 0 && bx < W && isFluid(mat[i - dir]));
       var target = -1, tx = 0, drop = false;
       for (var r = 1; r <= reach; r++) {
         var cx = x + dir * r;
@@ -298,6 +316,18 @@ var DIG = (function () {
         target = c;
         tx = cx;
         if (y + 1 < H && mat[c + W] === AIR) { drop = true; break; }
+      }
+      /* Under a head the cell passes through its own fluid to the nearest
+         open cell on its row, so a pool levels out across its width. */
+      if (target < 0 && pushed) {
+        for (r = 1; r <= PRESS; r++) {
+          cx = x + dir * r;
+          if (cx < 0 || cx >= W) break;
+          c = i + dir * r;
+          if (mat[c] === m) continue;
+          if (mat[c] === AIR) { target = c; tx = cx; }
+          break;
+        }
       }
       if (target >= 0 && (drop || pushed)) {
         if (wait) { mark(x, y); return; }
