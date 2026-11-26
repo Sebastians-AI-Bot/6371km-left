@@ -1,5 +1,5 @@
-/* Draws the dig grid as line-art with water and oil filled in, and turns
-   clicks into hits. */
+/* Draws the dig grid as line-art with water filled in and oil as one
+   smooth shape, and turns clicks into hits. */
 (function () {
   "use strict";
 
@@ -62,10 +62,9 @@
     return m === WATER || m === OIL;
   }
 
-  function fluidColor(i) {
-    var water = mat[i] === WATER;
-    var f = 1 + (shade[i] - 128) / 128 * (water ? 0.03 : 0.05);
-    return water ? pack(116 * f | 0, 152 * f | 0, 184 * f | 0, 215) : pack(40 * f | 0, 36 * f | 0, 33 * f | 0, 255);
+  function waterColor(i) {
+    var f = 1 + (shade[i] - 128) / 128 * 0.03;
+    return pack(116 * f | 0, 152 * f | 0, 184 * f | 0, 215);
   }
 
   function hatch(m, i, x, y) {
@@ -85,8 +84,8 @@
 
   function lineColor(i, x, y) {
     var m = mat[i];
-    if (m === AIR) return 0;
-    if (isFluid(m)) return fluidColor(i);
+    if (m === AIR || m === OIL) return 0;
+    if (m === WATER) return waterColor(i);
     if (exposed(i, x, y)) return P_INK;
     if ((x > 0 && differs(i, i - 1)) || (y > 0 && differs(i, i - W))) return P_INK;
     return hatch(m, i, x, y);
@@ -99,12 +98,119 @@
       for (var x = x0; x <= x1; x++) {
         var i = row + x;
         lp[i] = lineColor(i, x, y);
-        fp[i] = isFluid(mat[i]) ? lp[i] : (flag[i] & WET) ? P_WET : 0;
+        fp[i] = mat[i] === WATER ? lp[i] : (flag[i] & WET) ? P_WET : 0;
+        var o = mat[i] === OIL ? 1 : 0;
+        if (o !== oilSeen[i]) { oilSeen[i] = o; oilDirty = true; }
       }
     }
     var w = x1 - x0 + 1, h = y1 - y0 + 1;
     lines.ctx.putImageData(lines.img, 0, 0, x0, y0, w, h);
     fills.ctx.putImageData(fills.img, 0, 0, x0, y0, w, h);
+  }
+
+  /* Oil is drawn as one smooth shape: the cells are blurred into a field
+     and its 0.5 contour traced with marching squares. Walls count as half
+     oil so the shape meets them flush, and the fill is clipped to open
+     cells so it never covers the ground. */
+  var OIL_FILL = "#28241f", WALL = 0.45, LEVEL = 0.5;
+  var oilSeen = new Uint8Array(W * H);
+  var oilDirty = true, oilPath = null, oilClip = null;
+  var SQ_X = [0, 1, 1, 0], SQ_Y = [0, 0, 1, 1];
+
+  function blur3(a, b, w, h) {
+    var x, y, k;
+    for (y = 0; y < h; y++) {
+      for (x = 0; x < w; x++) {
+        k = y * w + x;
+        b[k] = (a[x > 0 ? k - 1 : k] + a[k] + a[x < w - 1 ? k + 1 : k]) / 3;
+      }
+    }
+    for (y = 0; y < h; y++) {
+      for (x = 0; x < w; x++) {
+        k = y * w + x;
+        a[k] = (b[y > 0 ? k - w : k] + b[k] + b[y < h - 1 ? k + w : k]) / 3;
+      }
+    }
+  }
+
+  function buildOil() {
+    oilDirty = false;
+    oilPath = null;
+    var x0 = W, y0 = H, x1 = -1, y1 = -1, x, y, k;
+    for (y = 0; y < H; y++) {
+      var row = oilSeen.subarray(y * W, y * W + W);
+      var a = row.indexOf(1);
+      if (a < 0) continue;
+      x0 = Math.min(x0, a);
+      x1 = Math.max(x1, row.lastIndexOf(1));
+      if (y0 === H) y0 = y;
+      y1 = y;
+    }
+    if (x1 < 0) return;
+    x0 = Math.max(0, x0 - 3); y0 = Math.max(0, y0 - 3);
+    x1 = Math.min(W - 1, x1 + 3); y1 = Math.min(H - 1, y1 + 3);
+    var w = x1 - x0 + 1, h = y1 - y0 + 1;
+    var f = new Float32Array(w * h), tmp = new Float32Array(w * h);
+    oilClip = new Path2D();
+    for (y = 0; y < h; y++) {
+      var run = -1;
+      for (x = 0; x <= w; x++) {
+        var m = x < w ? mat[(y0 + y) * W + x0 + x] : STONE;
+        var openCell = open(m);
+        if (x < w) f[y * w + x] = m === OIL ? 1 : openCell ? 0 : WALL;
+        if (openCell && run < 0) run = x;
+        else if (!openCell && run >= 0) { oilClip.rect(x0 + run, y0 + y, x - run, 1); run = -1; }
+      }
+    }
+    blur3(f, tmp, w, h);
+    blur3(f, tmp, w, h);
+    for (y = 0; y < h; y++) {
+      for (x = 0; x < w; x++) {
+        if (oilSeen[(y0 + y) * W + x0 + x]) f[y * w + x] = Math.max(f[y * w + x], 0.6);
+      }
+    }
+    var p = new Path2D(), v = [0, 0, 0, 0];
+    for (y = 0; y < h - 1; y++) {
+      var full = -1;
+      for (x = 0; x < w - 1; x++) {
+        var n = 0;
+        for (k = 0; k < 4; k++) {
+          v[k] = f[(y + SQ_Y[k]) * w + x + SQ_X[k]];
+          if (v[k] >= LEVEL) n++;
+        }
+        if (n === 4) { if (full < 0) full = x; continue; }
+        if (full >= 0) { p.rect(x0 + full + 0.5, y0 + y + 0.5, x - full, 1); full = -1; }
+        if (!n) continue;
+        var first = true;
+        for (k = 0; k < 4; k++) {
+          var b = (k + 1) & 3, inA = v[k] >= LEVEL;
+          var px = x0 + x + 0.5 + SQ_X[k], py = y0 + y + 0.5 + SQ_Y[k];
+          if (inA) {
+            if (first) { p.moveTo(px, py); first = false; } else p.lineTo(px, py);
+          }
+          if (inA !== (v[b] >= LEVEL)) {
+            var t = (LEVEL - v[k]) / (v[b] - v[k]);
+            var qx = px + t * (SQ_X[b] - SQ_X[k]), qy = py + t * (SQ_Y[b] - SQ_Y[k]);
+            if (first) { p.moveTo(qx, qy); first = false; } else p.lineTo(qx, qy);
+          }
+        }
+        p.closePath();
+      }
+      if (full >= 0) p.rect(x0 + full + 0.5, y0 + y + 0.5, w - 1 - full, 1);
+    }
+    oilPath = p;
+  }
+
+  function drawOil() {
+    if (oilDirty) buildOil();
+    if (!oilPath) return;
+    ctx.save();
+    ctx.translate(-cam.ox * cam.s, -cam.oy * cam.s);
+    ctx.scale(cam.s, cam.s);
+    ctx.clip(oilClip);
+    ctx.fillStyle = OIL_FILL;
+    ctx.fill(oilPath);
+    ctx.restore();
   }
 
   function recolor() {
@@ -171,10 +277,11 @@
   }
 
   /* Close up the line look is stroked per cell, so lines stay one pixel
-     thin however far in the view goes. Fluids and wet ground are filled
-     underneath. */
+     thin however far in the view goes. Water, wet ground and oil are
+     filled underneath. */
   function strokeLines() {
     blit(fills);
+    drawOil();
     var v = visible();
     var vx0 = v.x0, vx1 = v.x1;
     var ink = new Path2D(), mid = new Path2D();
@@ -230,7 +337,7 @@
 
   function drawLook() {
     if (cam.s >= VECTOR_AT) strokeLines();
-    else blit(lines);
+    else { blit(lines); drawOil(); }
   }
 
   function text(s, x, y, color, align, px, weight) {
