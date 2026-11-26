@@ -174,12 +174,20 @@ var DIG = (function () {
     return j;
   }
 
+  /* Sand moves at most one cell, and only this share of the substeps in
+     which it could, so a pour is slow enough to follow by eye. A waiting
+     grain keeps its chunk awake; a settled one does not. */
+  var SAND_PACE = 0.25;
+
   function grain(i, x, y) {
+    var sand = mat[i] === SAND;
+    var wait = sand && Math.random() > SAND_PACE;
     if (y + 1 < H) {
       var j = i + W;
       var t = mat[j];
+      if ((t === AIR || isFluid(t)) && wait) { mark(x, y); return; }
       if (t === AIR) {
-        var to = fallTo(j, y);
+        var to = sand ? j : fallTo(j, y);
         /* A falling grain drifts a cell sideways now and then, so a stream
            off a face spreads into a curtain instead of a one-cell chute. */
         var ty = (to / W) | 0;
@@ -205,6 +213,7 @@ var DIG = (function () {
         var side = i + d;
         var slips = freeFor(mat[side]) || ((flag[side] & LOOSE) && !body[side]);
         if (slips && freeFor(mat[j + d])) {
+          if (wait) { mark(x, y); return; }
           if (mat[j + d] === AIR) moveCell(i, j + d);
           else swapCell(i, j + d);
           mark(nx, y + 1);
