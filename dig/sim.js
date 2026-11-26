@@ -1,12 +1,17 @@
-/* Dig prototype: one grid of 1 cm cells holding seven test bays, each
-   3 m wide and 3 m deep, under 40 cm of sky.
+/* Dig simulation on a grid of 1 cm cells.
 
    Loose grains and fluids move cell by cell. Pebbles, clods and stone
    pieces are clumps that fall and slide as one block and never rotate.
    Cohesive ground stays put until an overhang reaches further than the
    material can carry, then it lets go. Digging is only possible where
-   the tool touches open air that reaches the sky. */
-var DIG = (function () {
+   the tool touches open air that reaches the sky.
+
+   The grid is a window onto a world that `world.cell` describes cell by
+   cell. Untouched ground is never stored: a chunk the window leaves is
+   kept only if something in it changed, and the window slides so any
+   ground can be reached. With `world.ring` set, the outermost ring of
+   chunks is frozen, as its neighbours outside the window do not move. */
+function makeDig(world) {
   "use strict";
 
   var AIR = 0, SAND = 1, TOPSOIL = 2, CLAY = 3, GRAVEL = 4, STONE = 5, WATER = 6, OIL = 7;
@@ -18,21 +23,9 @@ var DIG = (function () {
 
   var LOOSE = 1, WET = 2, CRACK = 4;
 
-  var BAY = 300, SKY = 40, DEPTH = 300;
-  var BAYS = [
-    { name: "sand" },
-    { name: "topsoil" },
-    { name: "clay" },
-    { name: "gravel" },
-    { name: "stone" },
-    { name: "water", note: "sand under a water table" },
-    { name: "oil", note: "clay over stone, oil pocket in the stone" }
-  ];
-  var W = BAY * BAYS.length;
-  var H = SKY + DEPTH;
+  var W = world.W;
+  var H = world.H;
   var N = W * H;
-  var TABLE = SKY + 40;
-  var OIL_LENS = { x: 5 * BAY + BAY + 190, y: SKY + 190, rx: 75, ry: 30 };
   var SETTLE_PAD = 48;
 
   var mat = new Uint8Array(N);
@@ -45,29 +38,32 @@ var DIG = (function () {
   var skyDirty = true;
   var skyQueue = new Int32Array(N);
 
-  var bodies = [null];
+  /* Clumps by id. Ids from the generator are negative and stable, so a
+     pebble keeps its id when its chunk is regenerated; split and broken
+     pieces get positive ids. */
+  var bodies = new Map();
+  var nextId = 1;
   var awake = [];
 
   var CS = 32;
   var CW = Math.ceil(W / CS);
   var CH = Math.ceil(H / CS);
+  var RING = world.ring ? CS : 0;
   var active = new Uint8Array(CW * CH);
   var next = new Uint8Array(CW * CH);
   var dirty = new Uint8Array(CW * CH);
+  var edited = new Uint8Array(CW * CH);
   var st = 1;
   var ticks = 0;
   var collapse = null;
   var taken = new Array(NAMES.length).fill(0);
   var lastActive = 0;
 
-  var seed = 7;
-  function rand() {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    var t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  }
+  /* World cell of the window's top left corner, in whole chunks. */
+  var ox = 0, oy = 0;
+  var store = new Map();
+  var onShift = null;
+  var gen = { mat: 0, flag: 0, shade: 0, clump: 0 };
 
   function isFluid(m) {
     return m === WATER || m === OIL;
@@ -83,6 +79,7 @@ var DIG = (function () {
     var c = cy * CW + cx;
     next[c] = 1;
     dirty[c] = 1;
+    edited[c] = 1;
     skyDirty = true;
     var lx = x - cx * CS;
     var ly = y - cy * CS;
@@ -110,7 +107,7 @@ var DIG = (function () {
   }
 
   function wakeBody(id) {
-    var b = bodies[id];
+    var b = bodies.get(id);
     if (b && !b.awake) {
       b.awake = true;
       b.vy = 0;
@@ -225,16 +222,16 @@ var DIG = (function () {
         }
       }
     }
-    if (y < TABLE) return;
+    if (oy + y < world.table) return;
     if (flag[i] & WET) seep(i, x, y);
-    else if (sand && soaked(i, x, y)) {
+    else if (sand && world.saturated(ox + x, oy + y) && soaked(i, x, y)) {
       flag[i] |= WET;
       mark(x, y);
     }
   }
 
-  /* Dry sand that comes to rest under the table soaks up water from a wet
-     or flooded neighbour. */
+  /* Dry sand that comes to rest in saturated ground soaks up water from
+     a wet or flooded neighbour. */
   function soaked(i, x, y) {
     var n = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y < H - 1 ? i + W : -1, i - W];
     for (var k = 0; k < 4; k++) {
@@ -257,7 +254,7 @@ var DIG = (function () {
       while (j >= W && mat[j] === WATER) j -= W;
       if (mat[j] !== AIR) continue;
       var jy = (j / W) | 0;
-      if (jy < TABLE) continue;
+      if (oy + jy < world.table) continue;
       open = true;
       if (Math.random() < 0.04) {
         mat[j] = WATER;
@@ -368,6 +365,7 @@ var DIG = (function () {
         for (var k = 0; k < CW; k++) {
           var c = rev ? CW - 1 - k : k;
           if (!active[cy * CW + c]) continue;
+          if (RING && (c === 0 || c === CW - 1 || cy === 0 || cy === CH - 1)) continue;
           var xa = c * CS;
           var xb = Math.min(W, xa + CS) - 1;
           var x;
@@ -380,9 +378,9 @@ var DIG = (function () {
   }
 
   function newBody(m, cells, isAwake) {
-    var id = bodies.length;
+    var id = nextId++;
     var b = { id: id, mat: m, cells: cells, awake: !!isAwake, vy: 0, carry: 0, flat: 0 };
-    bodies.push(b);
+    bodies.set(id, b);
     for (var k = 0; k < cells.length; k++) {
       var i = cells[k];
       body[i] = id;
@@ -403,7 +401,7 @@ var DIG = (function () {
       y = (i / W) | 0;
       x = i - y * W;
       var nx = x + dx, ny = y + dy;
-      if (nx < 0 || nx >= W || ny < 0 || ny >= H) return false;
+      if (nx < RING || nx >= W - RING || ny < RING || ny >= H - RING) return false;
       j = i + off;
       if (body[j] === id) continue;
       if (!freeFor(mat[j])) return false;
@@ -472,7 +470,7 @@ var DIG = (function () {
       if (y > y1) y1 = y;
     }
     var xo = d < 0 ? x0 - 1 : x1 + 1;
-    if (xo < 0 || xo >= W || y1 + 1 >= H) return false;
+    if (xo < RING || xo >= W - RING || y1 + 1 >= H - RING) return false;
     if (!freeFor(mat[(y1 + 1) * W + xo])) return false;
     var open = 0;
     for (y = y0; y <= y1; y++) if (freeFor(mat[y * W + xo])) open++;
@@ -492,11 +490,11 @@ var DIG = (function () {
     var list = awake;
     awake = [];
     list.sort(function (a, b) {
-      var ba = bodies[a], bb = bodies[b];
+      var ba = bodies.get(a), bb = bodies.get(b);
       return (bb ? bb.cells[bb.cells.length - 1] : 0) - (ba ? ba.cells[ba.cells.length - 1] : 0);
     });
     for (var k = 0; k < list.length; k++) {
-      var b = bodies[list[k]];
+      var b = bodies.get(list[k]);
       if (!b || !b.awake || !b.cells.length) continue;
       b.vy = Math.min(b.vy + 0.15, 3);
       b.carry += b.vy;
@@ -590,8 +588,8 @@ var DIG = (function () {
      Going up a column is free and going sideways or hanging below costs a
      cell. A cell whose cost passes its material's reach lets go. */
   function settle(x0, y0, x1, y1) {
-    x0 = Math.max(0, x0); y0 = Math.max(0, y0);
-    x1 = Math.min(W - 1, x1); y1 = Math.min(H - 1, y1);
+    x0 = Math.max(RING, x0); y0 = Math.max(RING, y0);
+    x1 = Math.min(W - 1 - RING, x1); y1 = Math.min(H - 1 - RING, y1);
     if (x1 < x0 || y1 < y0) return;
     var rw = x1 - x0 + 1, rh = y1 - y0 + 1, n = rw * rh;
     var cost = new Int32Array(n).fill(0x3fffffff);
@@ -671,9 +669,13 @@ var DIG = (function () {
     skyDirty = false;
     sky.fill(0);
     var head = 0, tail = 0, x, i;
-    for (x = 0; x < W; x++) {
-      if (freeFor(mat[x])) { sky[x] = 1; skyQueue[tail++] = x; }
+    /* Air on the window's edge is taken to reach the sky: it was dug from
+       above, or it is the sky. */
+    function seed(i) {
+      if (!sky[i] && mat[i] === AIR) { sky[i] = 1; skyQueue[tail++] = i; }
     }
+    for (x = 0; x < W; x++) { seed(x); seed((H - 1) * W + x); }
+    for (var ey = 1; ey < H - 1; ey++) { seed(ey * W); seed(ey * W + W - 1); }
     while (head < tail) {
       i = skyQueue[head++];
       var y = (i / W) | 0;
@@ -738,8 +740,9 @@ var DIG = (function () {
     tool = Math.max(1, Math.round(tool));
     var f = footprint(cx, cy, tool);
     if (!canReach(f)) return { ok: false };
-    var x0 = Math.max(0, f.x0), y0 = Math.max(0, f.y0);
-    var x1 = Math.min(W - 1, f.x1), y1 = Math.min(H - 1, f.y1);
+    var x0 = Math.max(RING, f.x0), y0 = Math.max(RING, f.y0);
+    var x1 = Math.min(W - 1 - RING, f.x1), y1 = Math.min(H - 1 - RING, f.y1);
+    if (x1 < x0 || y1 < y0) return { ok: false };
     var touched = {}, cut = [], broken = [], hurt = false, x, y, i, m;
     for (y = y0; y <= y1; y++) {
       for (x = x0; x <= x1; x++) {
@@ -758,13 +761,13 @@ var DIG = (function () {
     }
     var area = tool * tool;
     for (var key in touched) {
-      var b = bodies[key];
+      var b = bodies.get(Number(key));
       if (!b) continue;
       var inside = touched[key];
       if (b.cells.length <= area) {
         if (inside * 2 >= b.cells.length) {
           for (var k = 0; k < b.cells.length; k++) take(b.cells[k]);
-          bodies[key] = null;
+          bodies.delete(b.id);
         } else wakeBody(b.id);
       } else {
         var keep = [];
@@ -820,93 +823,183 @@ var DIG = (function () {
     }
   }
 
-  function pebbles(bx0, bx1, by0, by1) {
-    var cells = [];
-    for (var y = by0; y < by1; y++) {
-      for (var x = bx0; x < bx1; x++) cells.push(y * W + x);
-    }
-    var spacing = 5;
-    var x0 = bx0, y0 = by0;
-    var gw = Math.ceil((bx1 - bx0) / spacing) + 1, gh = Math.ceil((by1 - by0) / spacing) + 1;
-    var sx = new Float32Array(gw * gh), sy = new Float32Array(gw * gh);
-    for (var g = 0; g < gw * gh; g++) {
-      sx[g] = x0 + ((g % gw) + rand()) * spacing;
-      sy[g] = y0 + (((g / gw) | 0) + rand()) * spacing;
-    }
-    var groups = {};
-    for (var k = 0; k < cells.length; k++) {
-      var i = cells[k];
-      var cy = (i / W) | 0, cx = i - cy * W;
-      var gx = Math.floor((cx - x0) / spacing), gy = Math.floor((cy - y0) / spacing);
-      var best = 1e9, second = 1e9, bi = -1;
-      for (var oy = -1; oy <= 1; oy++) {
-        for (var ox = -1; ox <= 1; ox++) {
-          var qx = gx + ox, qy = gy + oy;
-          if (qx < 0 || qy < 0 || qx >= gw || qy >= gh) continue;
-          var q = qy * gw + qx;
-          var dx = sx[q] - cx - 0.5, dy = sy[q] - cy - 0.5;
-          var d2 = dx * dx + dy * dy;
-          if (d2 < best) { second = best; best = d2; bi = q; }
-          else if (d2 < second) second = d2;
-        }
-      }
-      if (Math.sqrt(second) - Math.sqrt(best) < 0.6) {
-        mat[i] = SAND;
-        flag[i] = LOOSE;
-      } else {
-        mat[i] = GRAVEL;
-        (groups[bi] || (groups[bi] = [])).push(i);
-      }
-    }
-    for (var key in groups) newBody(GRAVEL, groups[key], false);
+  function chunkKey(cx, cy) {
+    return (ox / CS + cx) + "," + (oy / CS + cy);
   }
 
-  function build() {
-    seed = 7;
-    mat.fill(0); flag.fill(0); dmg.fill(0); body.fill(0); stamp.fill(0);
-    bodies = [null];
-    awake = [];
-    calmed = 0;
-    active.fill(0); next.fill(0); dirty.fill(1);
-    collapse = null;
-    taken.fill(0);
-    skyDirty = true;
-    for (var i = 0; i < N; i++) shade[i] = (rand() * 256) | 0;
-    for (var b = 0; b < BAYS.length; b++) {
-      var bx0 = b * BAY, bx1 = bx0 + BAY;
-      var name = BAYS[b].name;
-      if (name === "gravel") { pebbles(bx0, bx1, SKY, H); continue; }
-      for (var y = SKY; y < H; y++) {
-        for (var x = bx0; x < bx1; x++) {
-          var j = y * W + x;
-          if (name === "sand") { mat[j] = SAND; flag[j] = LOOSE; }
-          else if (name === "topsoil") mat[j] = TOPSOIL;
-          else if (name === "clay") mat[j] = CLAY;
-          else if (name === "stone") mat[j] = STONE;
-          else if (name === "water") { mat[j] = SAND; flag[j] = LOOSE | (y >= TABLE ? WET : 0); }
-          else if (name === "oil") {
-            var ex = (x + 0.5 - OIL_LENS.x) / OIL_LENS.rx, ey = (y + 0.5 - OIL_LENS.y) / OIL_LENS.ry;
-            if (ex * ex + ey * ey < 1) mat[j] = OIL;
-            else mat[j] = y < SKY + 120 ? CLAY : STONE;
+  function saveChunk(cx, cy) {
+    var x0 = cx * CS, y0 = cy * CS, w = Math.min(CS, W - x0), h = Math.min(CS, H - y0);
+    var n = CS * CS;
+    var s = { mat: new Uint8Array(n), flag: new Uint8Array(n), dmg: new Uint8Array(n), shade: new Uint8Array(n), body: new Int32Array(n) };
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var i = (y0 + y) * W + x0 + x, k = y * CS + x;
+        s.mat[k] = mat[i]; s.flag[k] = flag[i]; s.dmg[k] = dmg[i]; s.shade[k] = shade[i]; s.body[k] = body[i];
+      }
+    }
+    store.set(chunkKey(cx, cy), s);
+  }
+
+  function loadChunk(cx, cy) {
+    var x0 = cx * CS, y0 = cy * CS, w = Math.min(CS, W - x0), h = Math.min(CS, H - y0);
+    var c = cy * CW + cx, key = chunkKey(cx, cy), s = store.get(key);
+    var x, y, i, k;
+    for (y = 0; y < h; y++) {
+      for (x = 0; x < w; x++) {
+        i = (y0 + y) * W + x0 + x;
+        if (s) {
+          k = y * CS + x;
+          mat[i] = s.mat[k]; flag[i] = s.flag[k]; dmg[i] = s.dmg[k]; shade[i] = s.shade[k]; body[i] = s.body[k];
+        } else {
+          world.cell(ox + x0 + x, oy + y0 + y, gen);
+          mat[i] = gen.mat; flag[i] = gen.flag; dmg[i] = 0; shade[i] = gen.shade; body[i] = gen.clump;
+        }
+        stamp[i] = 0;
+      }
+    }
+    if (s) store.delete(key);
+    edited[c] = s ? 1 : 0;
+    dirty[c] = 1;
+    active[c] = 0;
+    next[c] = s ? 1 : 0;
+  }
+
+  var addSeq = 0;
+
+  function addBodyCells(i0, i1, x0, x1) {
+    var touched = [];
+    addSeq++;
+    for (var i = i0; i < i1; i += W) {
+      for (var x = x0; x < x1; x++) {
+        var j = i + x, id = body[j];
+        if (!id) continue;
+        var b = bodies.get(id);
+        if (!b) {
+          b = { id: id, mat: mat[j], cells: [], awake: false, vy: 0, carry: 0, flat: 0 };
+          bodies.set(id, b);
+        }
+        if (b.seen !== addSeq) { b.seen = addSeq; touched.push(b); }
+        b.cells.push(j);
+      }
+    }
+    for (var k = 0; k < touched.length; k++) {
+      touched[k].cells.sort(function (p, q) { return p - q; });
+    }
+  }
+
+  /* new(x, y) = old(x + sx, y + sy), rows and columns that fall off are
+     dropped; the uncovered ones are filled by the caller. */
+  function shiftArray(a, w, h, sx, sy) {
+    var len = w - Math.abs(sx);
+    if (len <= 0 || Math.abs(sy) >= h) return;
+    var d0 = Math.max(0, -sx), s0 = Math.max(0, sx), y;
+    if (sy >= 0) {
+      for (y = 0; y < h - sy; y++) a.copyWithin(y * w + d0, (y + sy) * w + s0, (y + sy) * w + s0 + len);
+    } else {
+      for (y = h - 1; y >= -sy; y--) a.copyWithin(y * w + d0, (y + sy) * w + s0, (y + sy) * w + s0 + len);
+    }
+  }
+
+  function onRing(cx, cy) {
+    return cx === 0 || cy === 0 || cx === CW - 1 || cy === CH - 1;
+  }
+
+  /* Slides the window by whole chunks. Changed chunks that leave are kept;
+     chunks that come in are loaded from the store or generated. */
+  function slide(scx, scy) {
+    if (!scx && !scy) return;
+    if (onShift) onShift(scx, scy);
+    var full = Math.abs(scx) >= CW || Math.abs(scy) >= CH;
+    var cx, cy;
+    for (cy = 0; cy < CH; cy++) {
+      for (cx = 0; cx < CW; cx++) {
+        var nx = cx - scx, ny = cy - scy;
+        if ((nx < 0 || ny < 0 || nx >= CW || ny >= CH) && edited[cy * CW + cx]) saveChunk(cx, cy);
+      }
+    }
+    var sx = scx * CS, sy = scy * CS;
+    if (full) bodies.clear();
+    else {
+      shiftArray(mat, W, H, sx, sy); shiftArray(flag, W, H, sx, sy); shiftArray(dmg, W, H, sx, sy);
+      shiftArray(shade, W, H, sx, sy); shiftArray(body, W, H, sx, sy);
+      shiftArray(active, CW, CH, scx, scy); shiftArray(next, CW, CH, scx, scy);
+      shiftArray(dirty, CW, CH, scx, scy); shiftArray(edited, CW, CH, scx, scy);
+      bodies.forEach(function (b, id) {
+        var keep = [];
+        for (var k = 0; k < b.cells.length; k++) {
+          var i = b.cells[k], y = (i / W) | 0, x = i - y * W;
+          x -= sx; y -= sy;
+          if (x >= 0 && y >= 0 && x < W && y < H) keep.push(y * W + x);
+        }
+        if (keep.length) b.cells = keep;
+        else bodies.delete(id);
+      });
+    }
+    ox += sx;
+    oy += sy;
+    stamp.fill(0);
+    for (cy = 0; cy < CH; cy++) {
+      for (cx = 0; cx < CW; cx++) {
+        var px = cx + scx, py = cy + scy;
+        if (full || px < 0 || py < 0 || px >= CW || py >= CH) {
+          loadChunk(cx, cy);
+          addBodyCells(cy * CS * W, Math.min(H, cy * CS + CS) * W, cx * CS, Math.min(W, cx * CS + CS));
+        } else if (onRing(px, py) && !onRing(cx, cy)) {
+          next[cy * CW + cx] = 1;
+          for (var y = cy * CS; y < cy * CS + CS; y++) {
+            for (var x = cx * CS; x < cx * CS + CS; x++) if (body[y * W + x]) wakeBody(body[y * W + x]);
           }
         }
       }
     }
+    var still = [];
+    for (var k = 0; k < awake.length; k++) if (bodies.has(awake[k])) still.push(awake[k]);
+    awake = still;
+    collapse = null;
+    skyDirty = true;
+  }
+
+  /* Keeps world cell (wx, wy) near the middle of the window. */
+  function follow(wx, wy) {
+    var scx = Math.round((wx - ox - W / 2) / CS);
+    var scy = Math.round((wy - oy - H / 2) / CS);
+    if (Math.abs(scx) < 2) scx = 0;
+    if (Math.abs(scy) < 2) scy = 0;
+    if (!scx && !scy) return false;
+    slide(scx, scy);
+    return true;
+  }
+
+  function build() {
+    store.clear();
+    bodies.clear();
+    nextId = 1;
+    awake = [];
+    calmed = 0;
+    active.fill(0); next.fill(0); dirty.fill(1); edited.fill(0);
+    collapse = null;
+    taken.fill(0);
+    skyDirty = true;
+    ox = world.x0 || 0;
+    oy = world.y0 || 0;
+    for (var cy = 0; cy < CH; cy++) {
+      for (var cx = 0; cx < CW; cx++) loadChunk(cx, cy);
+    }
+    addBodyCells(0, N, 0, W);
   }
 
   function stats() {
     var awakeCount = 0;
-    for (var k = 0; k < awake.length; k++) if (bodies[awake[k]]) awakeCount++;
-    var live = 0;
-    for (k = 1; k < bodies.length; k++) if (bodies[k]) live++;
-    return { active: lastActive, chunks: CW * CH, awake: awakeCount, clumps: live, calmed: calmed, taken: taken.slice(), ticks: ticks };
+    for (var k = 0; k < awake.length; k++) if (bodies.has(awake[k])) awakeCount++;
+    var live = bodies.size;
+    return { active: lastActive, chunks: CW * CH, awake: awakeCount, clumps: live, stored: store.size, calmed: calmed, taken: taken.slice(), ticks: ticks };
   }
 
   function at(x, y) {
     x = Math.floor(x); y = Math.floor(y);
     if (x < 0 || y < 0 || x >= W || y >= H) return null;
     var i = y * W + x, m = mat[i];
-    var loose = !!(flag[i] & LOOSE) || body[i] > 0 || isFluid(m);
+    var loose = !!(flag[i] & LOOSE) || body[i] !== 0 || isFluid(m);
     return {
       mat: m,
       name: NAMES[m] + (flag[i] & WET ? " (wet)" : ""),
@@ -921,8 +1014,13 @@ var DIG = (function () {
     AIR: AIR, SAND: SAND, TOPSOIL: TOPSOIL, CLAY: CLAY, GRAVEL: GRAVEL, STONE: STONE, WATER: WATER, OIL: OIL,
     LOOSE: LOOSE, WET: WET, CRACK: CRACK,
     NAMES: NAMES, HITS: HITS,
-    W: W, H: H, BAY: BAY, SKY: SKY, TABLE: TABLE, BAYS: BAYS, CS: CS, CW: CW, CH: CH,
-    mat: mat, flag: flag, body: body, shade: shade, dmg: dmg, dirty: dirty,
+    W: W, H: H, CS: CS, CW: CW, CH: CH, RING: RING,
+    world: world,
+    mat: mat, flag: flag, body: body, shade: shade, dmg: dmg, dirty: dirty, edited: edited,
+    origin: function () { return { x: ox, y: oy }; },
+    follow: follow,
+    slide: slide,
+    onShift: function (fn) { onShift = fn; },
     step: step,
     dig: dig,
     footprint: footprint,
@@ -931,4 +1029,36 @@ var DIG = (function () {
     stats: stats,
     reset: build
   };
-})();
+}
+
+/* Integer hash of a cell to [0, 1), the same every time it is asked. */
+makeDig.hash = function (x, y, salt) {
+  var h = Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(y | 0, 0x165667b1) ^ Math.imul(salt | 0, 0x9e3779b9);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+};
+
+/* Pebble packing: Voronoi cells about `spacing` across with seeds from
+   the hash. Returns 0 on a seam (the matrix between pebbles) or the
+   pebble's clump id, negative and the same for every cell of it. */
+makeDig.pebble = function (wx, wy, spacing) {
+  var gx = Math.floor(wx / spacing), gy = Math.floor(wy / spacing);
+  var best = 1e9, second = 1e9, bx = 0, by = 0;
+  for (var oy = -1; oy <= 1; oy++) {
+    for (var ox = -1; ox <= 1; ox++) {
+      var qx = gx + ox, qy = gy + oy;
+      var dx = (qx + makeDig.hash(qx, qy, 1)) * spacing - wx - 0.5;
+      var dy = (qy + makeDig.hash(qx, qy, 2)) * spacing - wy - 0.5;
+      var d2 = dx * dx + dy * dy;
+      if (d2 < best) { second = best; best = d2; bx = qx; by = qy; }
+      else if (d2 < second) second = d2;
+    }
+  }
+  if (Math.sqrt(second) - Math.sqrt(best) < 0.6) return 0;
+  return -1 - (((by & 0x3fff) << 16) | (bx & 0xffff));
+};
+
+makeDig.AIR = 0; makeDig.SAND = 1; makeDig.TOPSOIL = 2; makeDig.CLAY = 3;
+makeDig.GRAVEL = 4; makeDig.STONE = 5; makeDig.WATER = 6; makeDig.OIL = 7;
+makeDig.LOOSE = 1; makeDig.WET = 2;

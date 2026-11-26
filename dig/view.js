@@ -353,15 +353,15 @@
     ctx.strokeStyle = MID;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(a.x, toScreen(0, S.SKY).y);
+    ctx.moveTo(a.x, toScreen(0, S.world.SKY).y);
     ctx.lineTo(a.x, b.y);
     ctx.lineTo(b.x, b.y);
-    ctx.lineTo(b.x, toScreen(0, S.SKY).y);
+    ctx.lineTo(b.x, toScreen(0, S.world.SKY).y);
     ctx.stroke();
-    for (var k = 0; k < S.BAYS.length; k++) {
-      var bay = S.BAYS[k];
-      var left = toScreen(k * S.BAY, S.SKY);
-      var mid = toScreen((k + 0.5) * S.BAY, S.SKY);
+    for (var k = 0; k < S.world.BAYS.length; k++) {
+      var bay = S.world.BAYS[k];
+      var left = toScreen(k * S.world.BAY, S.world.SKY);
+      var mid = toScreen((k + 0.5) * S.world.BAY, S.world.SKY);
       if (k > 0) {
         ctx.strokeStyle = FAINT;
         ctx.beginPath();
@@ -372,7 +372,7 @@
       text(bay.name, mid.x, mid.y - (bay.note ? 20 : 8), INK, "center", 12, 500);
       if (bay.note) text(bay.note, mid.x, mid.y - 7, FAINT, "center", 11);
     }
-    var t0 = toScreen(5 * S.BAY, S.TABLE), t1 = toScreen(6 * S.BAY, S.TABLE);
+    var t0 = toScreen(5 * S.world.BAY, S.world.TABLE), t1 = toScreen(6 * S.world.BAY, S.world.TABLE);
     ctx.save();
     ctx.strokeStyle = WATER_INK;
     ctx.setLineDash([6, 4]);
@@ -546,7 +546,7 @@
   if (q.get("s")) {
     cam.s = Number(q.get("s"));
     cam.ox = (Number(q.get("x")) || 0) - cssW / 2 / cam.s;
-    cam.oy = (Number(q.get("y")) || S.SKY) - cssH / 2 / cam.s;
+    cam.oy = (Number(q.get("y")) || S.world.SKY) - cssH / 2 / cam.s;
   }
   requestAnimationFrame(frame);
 
