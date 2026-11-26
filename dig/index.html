@@ -57,10 +57,6 @@
     padding: 1px 7px;
     cursor: pointer;
   }
-  #panel button.on {
-    border-color: #3a4654;
-    font-weight: 500;
-  }
   #panel dl {
     display: grid;
     grid-template-columns: auto auto;
@@ -82,12 +78,6 @@
     <span><span>tool</span><output id="toolOut">10 cm</output></span>
     <input id="tool" type="range" min="0" max="1" step="0.001" value="0.5">
   </label>
-  <div class="row">
-    <span>look</span>
-    <span>
-      <button data-look="tiles">tiles</button><button data-look="split">both</button><button data-look="lines">lines</button>
-    </span>
-  </div>
   <div class="row">
     <button id="pause">pause</button>
     <button id="reset">reset</button>
