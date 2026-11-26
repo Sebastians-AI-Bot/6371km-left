@@ -107,6 +107,8 @@
   var toolW = 10;
   var toolH = 10;
   var destroyTool = false;
+  /* Off, the tool only works once the cells are drawn. */
+  var digFar = true;
   var digHover = null;
   var digReach = { key: "", ok: false, at: 0 };
   var simLast = 0;
@@ -2068,6 +2070,7 @@
   var debugHit = null;
   var machinesHit = null;
   var toolModeHit = null;
+  var digFarHit = null;
   var digUpHit = null;
   var digDownHit = null;
   /* Shift turns the wheel at 1×, whatever the slider says. */
@@ -2082,18 +2085,6 @@
       text: function (w) { return formatLength(w); }
     },
     {
-      label: "tool width", min: 0.01, max: 10,
-      get: function () { return toolW / 100; },
-      set: function (m) { toolW = clamp(Math.round(m * 100), 1, 1000); },
-      text: function (m) { return formatLength(m); }
-    },
-    {
-      label: "tool height", min: 0.01, max: 10,
-      get: function () { return toolH / 100; },
-      set: function (m) { toolH = clamp(Math.round(m * 100), 1, 1000); },
-      text: function (m) { return formatLength(m); }
-    },
-    {
       label: "wheel speed", min: 0.25, max: 4,
       get: function () { return wheelSpeed; },
       set: function (k) { wheelSpeed = k; },
@@ -2102,6 +2093,32 @@
   ];
   var sliderHits = [];
   var sliderDrag = null;
+
+  /* Tool size fields in metres, laid over the debug panel. */
+  function sizeField(id, get, set) {
+    var el = document.getElementById(id);
+    el.value = get() / 100;
+    el.addEventListener("input", function () {
+      var m = Number(el.value);
+      if (m > 0) set(clamp(Math.round(m * 100), 1, 1000));
+    });
+    el.addEventListener("change", function () { el.value = get() / 100; });
+    return { el: el, at: "" };
+  }
+  var toolWField = sizeField("toolW", function () { return toolW; }, function (cm) { toolW = cm; });
+  var toolHField = sizeField("toolH", function () { return toolH; }, function (cm) { toolH = cm; });
+
+  function placeField(f, x, y, show) {
+    var at = show ? x + "," + y + "," + INK : "";
+    if (at === f.at) return;
+    f.at = at;
+    f.el.style.display = show ? "block" : "none";
+    if (!show) return;
+    f.el.style.left = x + "px";
+    f.el.style.top = y + "px";
+    f.el.style.color = INK;
+    f.el.style.borderColor = MID;
+  }
 
   function sliderT(sl) {
     return Math.log(sl.get() / sl.min) / Math.log(sl.max / sl.min);
@@ -2143,12 +2160,16 @@
     var controlH = 22;
     var sliderH = 34;
     var w = Math.ceil(maxW + pad * 2);
-    var h = debugOpen ? headH + 4 + rows.length * rowH + SLIDERS.length * sliderH + controlH * 3 : headH;
+    var h = debugOpen ? headH + 4 + rows.length * rowH + SLIDERS.length * sliderH + controlH * 6 : headH;
     var x = 10;
     var y = 42;
     debugHit = { x: x, y: y, w: w, h: headH };
     machinesHit = debugOpen ? { x: x, y: y + h - controlH, w: w, h: controlH } : null;
     toolModeHit = debugOpen ? { x: x, y: y + h - controlH * 3, w: w, h: controlH } : null;
+    digFarHit = debugOpen ? { x: x, y: y + h - controlH * 4, w: w, h: controlH } : null;
+    var fieldY = y + h - controlH * 6;
+    placeField(toolWField, x + w - pad - 78, fieldY + 2, debugOpen);
+    placeField(toolHField, x + w - pad - 78, fieldY + controlH + 2, debugOpen);
     var digY = y + h - controlH * 2;
     digUpHit = debugOpen ? { x: x + w - pad - ctx.measureText(digText).width - 4, y: digY, w: 22, h: controlH } : null;
     digDownHit = debugOpen ? { x: x + w - pad - 18, y: digY, w: 22, h: controlH } : null;
@@ -2232,6 +2253,12 @@
     ctx.lineTo(x + w, machinesHit.y);
     ctx.moveTo(x, toolModeHit.y);
     ctx.lineTo(x + w, toolModeHit.y);
+    ctx.moveTo(x, digFarHit.y);
+    ctx.lineTo(x + w, digFarHit.y);
+    ctx.moveTo(x, fieldY);
+    ctx.lineTo(x + w, fieldY);
+    ctx.moveTo(x, fieldY + controlH);
+    ctx.lineTo(x + w, fieldY + controlH);
     ctx.stroke();
     setFont(12, 500);
     ctx.fillStyle = INK;
@@ -2250,6 +2277,16 @@
     ctx.fillText("tool", x + pad, toolModeHit.y + controlH / 2);
     ctx.textAlign = "right";
     ctx.fillText(destroyTool ? "destroys all" : "digs", x + w - pad, toolModeHit.y + controlH / 2);
+    ctx.textAlign = "left";
+    ctx.fillText("zoomed out", x + pad, digFarHit.y + controlH / 2);
+    ctx.textAlign = "right";
+    ctx.fillText(digFar ? "digs" : "no tool", x + w - pad, digFarHit.y + controlH / 2);
+    ctx.textAlign = "left";
+    ctx.fillText("tool width", x + pad, fieldY + controlH / 2);
+    ctx.fillText("tool height", x + pad, fieldY + controlH * 1.5);
+    ctx.textAlign = "right";
+    ctx.fillText("m", x + w - pad, fieldY + controlH / 2);
+    ctx.fillText("m", x + w - pad, fieldY + controlH * 1.5);
     ctx.restore();
   }
 
@@ -2612,20 +2649,35 @@
     return digReach.ok;
   }
 
+  function inWindow(fp) {
+    var ring = DIG.RING;
+    return fp.x0 >= ring && fp.y0 >= ring && fp.x1 < DIG.W - ring && fp.y1 < DIG.H - ring;
+  }
+
+  /* Outside the window only the untouched ground is known. */
+  var genCell = { mat: 0, flag: 0, shade: 0, clump: 0 };
+  function groundAt(c) {
+    var o = DIG.origin();
+    DIG.world.cell(o.x + Math.floor(c.x), o.y + Math.floor(c.y), genCell);
+    return { mat: genCell.mat, name: DIG.NAMES[genCell.mat] + (genCell.flag & DIG.WET ? " (wet)" : ""), hitsLeft: 1 };
+  }
+
   function drawDigHover(v) {
-    if (!digHover || pan || modalOpen || digLook(v.px) < 0.5) return;
+    if (!digHover || pan || modalOpen || hitRect(debugBox, digHover.x, digHover.y)) return;
+    if (!digFar && digLook(v.px) < 0.5) return;
     var c = digCellAt(v, digHover.x, digHover.y);
     if (!c) return;
     var fp = DIG.footprint(c.x, c.y, toolW, toolH);
-    var ok = digReachOf(fp);
+    var inside = inWindow(fp);
+    var ok = !inside || digReachOf(fp);
     var x0 = c.f.sx(fp.x0), y0 = c.f.sy(fp.y0);
     var x1 = c.f.sx(fp.x1 + 1), y1 = c.f.sy(fp.y1 + 1);
     ctx.save();
     ctx.strokeStyle = ok ? INK : FAINT;
     ctx.lineWidth = 1;
     ctx.setLineDash(ok ? [] : [3, 3]);
-    ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5, Math.max(1, Math.round(x1 - x0)), Math.max(1, Math.round(y1 - y0)));
-    var here = DIG.at(c.x, c.y);
+    ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5, Math.max(3, Math.round(x1 - x0)), Math.max(3, Math.round(y1 - y0)));
+    var here = inside ? DIG.at(c.x, c.y) : groundAt(c);
     var parts = [];
     if (here && here.mat !== DIG.AIR) {
       parts.push(here.name + (ok && !destroyTool && here.hitsLeft > 1 ? ", " + here.hitsLeft + " hits" : ""));
@@ -2646,14 +2698,22 @@
     ctx.restore();
   }
 
+  /* Zoomed out the window is not under the view, so it is moved to the
+     click first. */
   function digAt(sx, sy) {
     var v = viewOf(currentWorldW());
-    if (digLook(v.px) < 0.5) return false;
+    if (!digFar && digLook(v.px) < 0.5) return false;
     var c = digCellAt(v, sx, sy);
     if (!c) return false;
-    if (DIG.dig(c.x, c.y, toolW, toolH, destroyTool).ok) {
-      var o = DIG.origin();
-      var fp = DIG.footprint(c.x, c.y, toolW, toolH);
+    var o = DIG.origin();
+    var wx = o.x + c.x, wy = o.y + c.y;
+    if (!inWindow(DIG.footprint(c.x, c.y, toolW, toolH))) {
+      DIG.slide(Math.round((c.x - DIG.W / 2) / DIG.CS), Math.round((c.y - DIG.H / 2) / DIG.CS));
+      o = DIG.origin();
+    }
+    var cx = wx - o.x, cy = wy - o.y;
+    if (DIG.dig(cx, cy, toolW, toolH, destroyTool).ok) {
+      var fp = DIG.footprint(cx, cy, toolW, toolH);
       var reach = Math.max(Math.abs(o.x + fp.x0), Math.abs(o.x + fp.x1 + 1)) / 100;
       faceGoal = clamp(Math.max(faceGoal, reach + FACE_ROOM), FACE_MIN / 2, FACE_MAX / 2);
     }
@@ -4114,7 +4174,7 @@
       canvas.style.cursor = "ew-resize";
       return;
     }
-    if (pointerOnDebug(p.x, p.y) || hitRect(machinesHit, p.x, p.y) || hitRect(toolModeHit, p.x, p.y) || pointerOnTheme(p.x, p.y) ||
+    if (pointerOnDebug(p.x, p.y) || hitRect(machinesHit, p.x, p.y) || hitRect(toolModeHit, p.x, p.y) || hitRect(digFarHit, p.x, p.y) || pointerOnTheme(p.x, p.y) ||
       hitRect(digUpHit, p.x, p.y) || hitRect(digDownHit, p.x, p.y)) {
       canvas.style.cursor = "pointer";
       return;
@@ -4130,6 +4190,7 @@
   });
 
   window.addEventListener("mousedown", function (event) {
+    if (event.target.tagName === "INPUT") return;
     var p = pointerXY(event);
     if ((event.button === 1 || event.button === 2) && !modalOpen) {
       pan = { x: p.x, y: p.y, panX: panX, top: viewOf(currentWorldW()).top };
@@ -4145,6 +4206,11 @@
     }
     if (hitRect(toolModeHit, p.x, p.y)) {
       destroyTool = !destroyTool;
+      event.preventDefault();
+      return;
+    }
+    if (hitRect(digFarHit, p.x, p.y)) {
+      digFar = !digFar;
       event.preventDefault();
       return;
     }
@@ -4177,6 +4243,7 @@
       event.preventDefault();
       return;
     }
+    if (debugOpen && hitRect(debugBox, p.x, p.y)) return;
     if (!pointerOnStrip(p.x, p.y)) {
       if (digAt(p.x, p.y)) event.preventDefault();
       return;
@@ -4200,6 +4267,7 @@
   });
 
   window.addEventListener("keydown", function (event) {
+    if (event.target.tagName === "INPUT") return;
     var key = event.key;
     if (modalOpen && key === "Escape") {
       modalOpen = false;

@@ -18,6 +18,20 @@
     cursor: crosshair;
     touch-action: none;
   }
+  /* Tool size fields; zoom.js places them on the debug panel. */
+  .tool-size {
+    position: fixed;
+    display: none;
+    box-sizing: border-box;
+    width: 62px;
+    height: 18px;
+    padding: 0 4px;
+    border: 1px solid;
+    border-radius: 2px;
+    background: transparent;
+    font: 12px ui-sans-serif, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    text-align: right;
+  }
 </style>
 <script>
 /* Apply a saved dark ground before the first paint. The colour is the
@@ -36,6 +50,8 @@
 </head>
 <body>
 <canvas id="sheet" aria-label="Line section from a 10 square metre patch out to a cut through the Earth"></canvas>
+<input class="tool-size" id="toolW" type="number" min="0.01" max="10" step="0.01" aria-label="Tool width in metres">
+<input class="tool-size" id="toolH" type="number" min="0.01" max="10" step="0.01" aria-label="Tool height in metres">
 <script src="../dig/sim.js"></script>
 <script src="../dig/paint.js"></script>
 <script src="ground.js"></script>
