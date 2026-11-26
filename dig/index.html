@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6.371 km left — dig prototype</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #f3f0e8;
+    overflow: hidden;
+    font: 12px ui-sans-serif, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #3a4654;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+  }
+  #panel {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    width: 210px;
+    background: #f3f0e8;
+    border: 0.8px solid #5c6c7c;
+    user-select: none;
+  }
+  #panel header {
+    padding: 4px 8px;
+    font-weight: 500;
+    border-bottom: 0.8px solid #5c6c7c;
+  }
+  #panel .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 5px 8px;
+    border-bottom: 0.8px solid #c9c3b6;
+  }
+  #panel .row:last-child { border-bottom: 0; }
+  #panel .slider { display: block; }
+  #panel .slider span { display: flex; justify-content: space-between; }
+  #panel input[type=range] {
+    width: 100%;
+    margin: 6px 0 2px;
+    accent-color: #3a4654;
+  }
+  #panel button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0.8px solid #c9c3b6;
+    padding: 1px 7px;
+    cursor: pointer;
+  }
+  #panel button.on {
+    border-color: #3a4654;
+    font-weight: 500;
+  }
+  #panel dl {
+    display: grid;
+    grid-template-columns: auto auto;
+    gap: 1px 8px;
+    margin: 0;
+    padding: 5px 8px;
+    border-bottom: 0.8px solid #c9c3b6;
+  }
+  #panel dt { color: #8e9bab; }
+  #panel dd { margin: 0; text-align: right; }
+  #panel .hint { color: #8e9bab; display: block; line-height: 1.5; }
+</style>
+</head>
+<body>
+<canvas id="sheet" aria-label="Side section of seven 3 m test bays to dig into"></canvas>
+<aside id="panel">
+  <header>dig</header>
+  <label class="row slider">
+    <span><span>tool</span><output id="toolOut">10 cm</output></span>
+    <input id="tool" type="range" min="0" max="1" step="0.001" value="0.5">
+  </label>
+  <div class="row">
+    <span>look</span>
+    <span>
+      <button data-look="tiles">tiles</button><button data-look="split">both</button><button data-look="lines">lines</button>
+    </span>
+  </div>
+  <div class="row">
+    <button id="pause">pause</button>
+    <button id="reset">reset</button>
+  </div>
+  <dl id="stats"></dl>
+  <div class="row"><span class="hint">click to dig, wheel to zoom (shift: faster), right-drag to pan</span></div>
+</aside>
+<script src="sim.js"></script>
+<script src="view.js"></script>
+</body>
+</html>
