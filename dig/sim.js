@@ -381,7 +381,7 @@ var DIG = (function () {
 
   function newBody(m, cells, isAwake) {
     var id = bodies.length;
-    var b = { id: id, mat: m, cells: cells, awake: !!isAwake, vy: 0, carry: 0 };
+    var b = { id: id, mat: m, cells: cells, awake: !!isAwake, vy: 0, carry: 0, flat: 0 };
     bodies.push(b);
     for (var k = 0; k < cells.length; k++) {
       var i = cells[k];
@@ -480,6 +480,14 @@ var DIG = (function () {
     return tryMove(b, d, 0);
   }
 
+  /* Tips move a clump sideways without lowering it, so two of them can
+     undo each other forever. A clump may tip only this often between two
+     moves that take it down; after that it sleeps unless it can fall.
+     Waking does not reset the count, so neighbours cannot keep each
+     other going either. */
+  var FLAT_LIMIT = 4;
+  var calmed = 0;
+
   function stepBodies() {
     var list = awake;
     awake = [];
@@ -500,10 +508,19 @@ var DIG = (function () {
         if (tryMove(b, 0, 1)) moved = true;
         else break;
       }
-      if (!moved) {
+      if (moved) b.flat = 0;
+      else {
         if (b.cells.length <= 900) {
           var d = Math.random() < 0.5 ? 1 : -1;
-          moved = tryMove(b, d, 1) || tryMove(b, -d, 1) || tip(b, d) || tip(b, -d);
+          moved = tryMove(b, d, 1) || tryMove(b, -d, 1);
+          if (moved) b.flat = 0;
+          else if (b.flat < FLAT_LIMIT) {
+            moved = tip(b, d) || tip(b, -d);
+            if (moved) b.flat++;
+          } else if (b.flat === FLAT_LIMIT) {
+            b.flat++;
+            calmed++;
+          }
         }
         b.vy = moved ? 0.5 : 0;
       }
@@ -849,6 +866,7 @@ var DIG = (function () {
     mat.fill(0); flag.fill(0); dmg.fill(0); body.fill(0); stamp.fill(0);
     bodies = [null];
     awake = [];
+    calmed = 0;
     active.fill(0); next.fill(0); dirty.fill(1);
     collapse = null;
     taken.fill(0);
@@ -881,7 +899,7 @@ var DIG = (function () {
     for (var k = 0; k < awake.length; k++) if (bodies[awake[k]]) awakeCount++;
     var live = 0;
     for (k = 1; k < bodies.length; k++) if (bodies[k]) live++;
-    return { active: lastActive, chunks: CW * CH, awake: awakeCount, clumps: live, taken: taken.slice(), ticks: ticks };
+    return { active: lastActive, chunks: CW * CH, awake: awakeCount, clumps: live, calmed: calmed, taken: taken.slice(), ticks: ticks };
   }
 
   function at(x, y) {

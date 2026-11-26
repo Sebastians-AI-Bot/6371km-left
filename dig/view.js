@@ -444,7 +444,8 @@
       ["sim", simMs.toFixed(1) + " ms"],
       ["zoom", (cam.s >= 1 ? cam.s.toFixed(1) : cam.s.toFixed(2)) + " px/cm"],
       ["moving", s.active + " of " + s.chunks + " chunks"],
-      ["clumps", s.awake + " moving, " + s.clumps]
+      ["clumps", s.awake + " moving, " + s.clumps],
+      ["calmed", s.calmed + " clumps stopped from jiggling"]
     ];
     var any = false;
     for (var m = 1; m < s.taken.length; m++) {
