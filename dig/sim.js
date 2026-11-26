@@ -670,9 +670,16 @@ function makeDig(world) {
     sky.fill(0);
     var head = 0, tail = 0, x, i;
     /* Air on the window's edge is taken to reach the sky: it was dug from
-       above, or it is the sky. */
+       above, or it is the sky. Untouched air the world calls buried (a gas
+       pocket) is not. */
     function seed(i) {
-      if (!sky[i] && mat[i] === AIR) { sky[i] = 1; skyQueue[tail++] = i; }
+      if (sky[i] || mat[i] !== AIR) return;
+      if (world.sky) {
+        var sy = (i / W) | 0, sx = i - sy * W;
+        if (!edited[((sy / CS) | 0) * CW + ((sx / CS) | 0)] && !world.sky(ox + sx, oy + sy)) return;
+      }
+      sky[i] = 1;
+      skyQueue[tail++] = i;
     }
     for (x = 0; x < W; x++) { seed(x); seed((H - 1) * W + x); }
     for (var ey = 1; ey < H - 1; ey++) { seed(ey * W); seed(ey * W + W - 1); }

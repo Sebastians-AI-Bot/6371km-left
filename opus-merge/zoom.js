@@ -6,7 +6,10 @@
    dug. Hold Alt and the wheel scrolls the section. Keys 1, 2 and 3 jump
    to the soils, the crust, and the globe. ?dig=granite opens the cut at
    that unit and ?face=500 makes the centre face 500 m wide; the debug
-   panel sets both, and the wheel speed. */
+   panel sets both, and the wheel speed.
+   Zoomed in, the centre face is ground to dig, cell by centimetre cell
+   (../dig): left click hits it with the tool from the debug panel,
+   middle or right drag pans at any zoom. */
 
 (function () {
   "use strict";
@@ -14,8 +17,6 @@
   var R_KM = 6371;
   var R = R_KM * 1000;
   var PATCH = Math.sqrt(10);
-  var PIT_W = 1.2;
-  var PIT_D = 0.22;
   var PAPER = "#f3f0e8";
   var INK = "#3a4654";
   var MID = "#5c6c7c";
@@ -54,6 +55,7 @@
     if (document.body) document.body.style.background = ground;
     patternCache = {};
     patternCount = 0;
+    if (digPaint) digPaint.setColors(digColors());
   }
 
   function readTheme() {
@@ -96,6 +98,25 @@
     { name: "magma", hatch: "magma", d0: 37000, d1: 47000, x0: -8000, x1: 8000 }
   ];
 
+  /* The diggable ground: a window of cells that follows the view over the
+     centre face. Changed chunks are kept when the window moves on. */
+  var DIG = makeDig(makeColumnWorld(COLUMN, POCKETS));
+  var digPaint = null;
+  var toolCm = 10;
+  var digHover = null;
+  var digReach = { key: "", ok: false, at: 0 };
+  var simLast = 0;
+  var simAcc = 0;
+
+  function digColors() {
+    return {
+      paper: PAPER, ink: INK, mid: MID, faint: FAINT,
+      waterInk: "#46698f", water: "#7498b8",
+      wet: dark ? "#25323f" : "#d5e1ea",
+      oil: dark ? invertHex("#28241f") : "#28241f"
+    };
+  }
+
   var LAYERS = [
     { depth: 0.3 },
     { depth: 1.2 },
@@ -125,6 +146,10 @@
      the middle of the screen. */
   var scrollT = 0;
   var pointerY = null;
+  var pointerX = null;
+  /* Flat x at the middle of the view. Middle or right drag moves it. */
+  var panX = 0;
+  var pan = null;
   var OPEN_DEPTH = 3;
   /* Presented frames, not a tight redraw loop. A bucket of about a tenth
      of a second: frames in the bucket divided by the time those frames spanned. */
@@ -141,8 +166,9 @@
     return PATCH / 0.4;
   }
 
+  /* As close as the dig page: 48 px to the centimetre. */
   function closeWidth() {
-    return 2;
+    return sheetBox().w / 4800;
   }
 
   function farWidth(aspect) {
@@ -298,7 +324,7 @@
       box: box,
       worldW: worldW,
       worldH: worldH,
-      left: -worldW / 2,
+      left: panX - worldW / 2,
       top: top,
       px: box.w / worldW
     };
@@ -1032,24 +1058,6 @@
     ctx.restore();
   }
 
-  function drawHatch(v) {
-    if (!(PIT_D * v.px > 6 && PIT_W * v.px > 14)) return;
-    var pit = PIT_W / 2;
-    var sL = surfaceY(-pit);
-    var sR = surfaceY(pit);
-    var pts = [[-pit, sL], [pit, sR], [pit, sR + PIT_D], [-pit, sL + PIT_D]];
-    var sp = screenPoly(v, pts);
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(sp[0].x, sp[0].y);
-    for (var i = 1; i < sp.length; i++) ctx.lineTo(sp[i].x, sp[i].y);
-    ctx.closePath();
-    ctx.fillStyle = PAPER;
-    ctx.fill();
-    ctx.restore();
-    hatch(sp, 5, -Math.PI / 4);
-  }
-
   function layerSeparated(kept, radius, pxPerM) {
     var px = radius * pxPerM;
     for (var k = 0; k < kept.length; k++) {
@@ -1061,7 +1069,7 @@
 
   /* Boundaries down to depthMax. The base of the cut and the surface are
      edges of the cut, drawn heavier. */
-  function drawLayerLines(v, depthMax, pit) {
+  function drawLayerLines(v, depthMax) {
     var kept = [R * v.px, (R - depthMax) * v.px];
     var i;
     for (i = 0; i < LAYERS.length; i++) {
@@ -1082,30 +1090,7 @@
     ctx.strokeStyle = INK;
     ctx.lineWidth = 1.35;
     if (depthMax < R) drawShell(v, R - depthMax, null);
-    var openPit = pit && PIT_W * v.px > 10;
-    drawShell(v, R, openPit ? [-PIT_W / 2, PIT_W / 2] : null);
-  }
-
-  function drawPitAndSurfaceCut(v) {
-    var pit = PIT_W / 2;
-    var pw = PIT_W * v.px;
-    var ph = PIT_D * v.px;
-    if (pw < 8 || ph < 4) return;
-    var sL = surfaceY(-pit);
-    var sR = surfaceY(pit);
-    var a = worldToScreen(v, -pit, sL);
-    var b = worldToScreen(v, pit, sR);
-    var c = worldToScreen(v, pit, sR + PIT_D);
-    var d = worldToScreen(v, -pit, sL + PIT_D);
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1.15;
-    ctx.setLineDash([]);
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(d.x, d.y);
-    ctx.lineTo(c.x, c.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
+    drawShell(v, R, null);
   }
 
   function arrowHead(x, y, angle) {
@@ -1186,7 +1171,6 @@
 
   function drawPatchDims(v, tb) {
     var half = PATCH / 2;
-    var pit = PIT_W / 2;
     var widthPx = PATCH * v.px;
     if (widthPx < 70) return;
     var yS = surfaceY(0);
@@ -1199,12 +1183,6 @@
     var noteY = p.y - 58;
     if (!inBlock(tb, p.x, noteY, 4) && noteY > v.box.y + 8) {
       ctx.fillText("10 m\u00b2", p.x, noteY);
-    }
-    if (PIT_W * v.px > 64) {
-      dimHorizontal(v, -pit, yS, pit, yS, "1.20 m", -24, tb);
-    }
-    if (PIT_D * v.px > 26) {
-      dimVertical(v, pit, yS, yS + PIT_D, "22 cm", 32, tb);
     }
   }
 
@@ -1684,13 +1662,9 @@
     clipPiece(vp, piece);
     enterSection(piece);
     paintUnits(vp, depth, !piece.wedge);
-    drawLayerLines(vp, depth, face);
+    drawLayerLines(vp, depth);
     leaveSection();
-    if (face) {
-      drawHatch(vp);
-      drawPitAndSurfaceCut(vp);
-    }
-    if ((face || piece.name === "right") && depth >= SHAFT.y1) drawWorks(vp);
+    if (face) drawDigCells(vp);
     ctx.restore();
   }
 
@@ -2098,6 +2072,12 @@
       get: function () { return FACE_HALF * 2; },
       set: function (w) { FACE_HALF = w / 2; },
       text: function (w) { return formatLength(w); }
+    },
+    {
+      label: "tool", min: 1, max: 100,
+      get: function () { return toolCm; },
+      set: function (cm) { toolCm = clamp(Math.round(cm), 1, 100); },
+      text: function (cm) { return cm >= 100 ? "1 m" : cm + " cm"; }
     },
     {
       label: "wheel speed", min: 0.25, max: 4,
@@ -2529,135 +2509,144 @@
     scrollT = scrollForTop(worldW, v.top + (dy / 100) * (shown / 5));
   }
 
-  /* A timbered shaft in the patch, from the surface into the gravel.
-     Too narrow for its timbers it is only its outline, then a line, and
-     it is dropped once that line would be a speck. */
-  var SHAFT = { x0: 0.66, x1: 1.36, y0: 0, y1: 6.2 };
-  var CHAMBER = { x0: 1.36, x1: 1.74, y0: 1.76, y1: 2.42 };
-
-  function shaftReadable(v) {
-    if (globeInView(v.worldW)) return false;
-    return (SHAFT.x1 - SHAFT.x0) * v.px >= 16;
+  /* Dig cells on the centre face. A cell is a centimetre: x across the
+     face, y down from the surface, offset by the window's origin. The
+     window is lifted onto the curve of the surface at its middle. */
+  function digLift() {
+    var o = DIG.origin();
+    return surfaceY((o.x + DIG.W / 2) / 100);
   }
 
-  function wline(v, x0, y0, x1, y1) {
-    var a = worldToScreen(v, x0, y0);
-    var b = worldToScreen(v, x1, y1);
-    strokeLine(a.x, a.y, b.x, b.y);
+  /* 0 far out, where only changed ground is shown over the hatch, to 1
+     close in, where the cells replace it. */
+  function digLook(px) {
+    return smoothstep((px / 100 - 0.8) / 0.7);
   }
 
-  function drawShaftMark(v) {
-    var a = worldToScreen(v, SHAFT.x0, SHAFT.y0);
-    var b = worldToScreen(v, SHAFT.x1, SHAFT.y1);
-    if (b.y - a.y < 3) return;
+  function digFace(v) {
+    var fv = faceView(v);
+    var o = DIG.origin();
+    var lift = digLift();
+    return {
+      fv: fv,
+      sx: function (cx) { return fv.box.x + ((o.x + cx) / 100 - fv.left) * fv.px; },
+      sy: function (cy) { return fv.box.y + ((o.y + cy) / 100 + lift - fv.top) * fv.pxY; },
+      cx: function (sx) { return (fv.left + (sx - fv.box.x) / fv.px) * 100 - o.x; },
+      cy: function (sy) { return (fv.top + (sy - fv.box.y) / fv.pxY - lift) * 100 - o.y; }
+    };
+  }
+
+  /* The window cell under a screen point, if that point is on the face. */
+  function digCellAt(v, sx, sy) {
+    var b = v.box;
+    if (sx < b.x || sx > b.x + b.w || sy < b.y || sy > b.y + b.h) return null;
+    var f = digFace(v);
+    var o = DIG.origin();
+    var x = f.cx(sx), y = f.cy(sy);
+    if (Math.abs((o.x + x) / 100) > FACE_HALF || (o.y + y) / 100 > digDepth()) return null;
+    return { x: x, y: y, f: f };
+  }
+
+  function drawDigCells(vp) {
+    var cell = vp.px / 100;
+    if (cell < 0.01) return;
+    var o = DIG.origin();
+    var look = digLook(vp.px);
     ctx.save();
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1;
-    ctx.setLineDash([]);
-    if (b.x - a.x >= 3) {
+    ctx.transform(cell, 0, 0, cell,
+      vp.box.x + (o.x / 100 - vp.left) * vp.px,
+      vp.box.y + (o.y / 100 + digLift() - vp.top) * vp.px);
+    var floor = digDepth() * 100 - o.y;
+    if (floor < DIG.H) {
+      ctx.beginPath();
+      ctx.rect(-DIG.W, -DIG.H, DIG.W * 3, floor + DIG.H);
+      ctx.clip();
+    }
+    if (look < 1) digPaint.drawOverlay(ctx);
+    if (look > 0) {
+      ctx.globalAlpha = look;
       ctx.fillStyle = PAPER;
-      ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
-      ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
-    } else {
-      strokeLine((a.x + b.x) / 2, a.y, (a.x + b.x) / 2, b.y);
+      ctx.fillRect(0, 0, DIG.W, DIG.H);
+      digPaint.draw(ctx, 4);
     }
     ctx.restore();
   }
 
-  function drawWorks(v) {
-    if (!shaftReadable(v)) {
-      drawShaftMark(v);
-      return;
+  /* Keeps the window under the middle of the view while the cells can be
+     seen, with no more than 2.56 m of sky in it. */
+  function digFollow(v) {
+    if (v.px / 100 < 0.3) return;
+    var fv = faceView(v);
+    var x = clamp(v.left + v.worldW / 2, -FACE_HALF, FACE_HALF);
+    var y = fv.top + fv.worldH / 2 - digLift();
+    DIG.follow(x * 100, Math.max(y * 100, DIG.H / 2 - 256));
+  }
+
+  function digReachOf(fp) {
+    var key = fp.x0 + "," + fp.y0 + "," + fp.x1;
+    var now = performance.now();
+    if (key !== digReach.key || now - digReach.at > 150) {
+      digReach = { key: key, ok: DIG.canReach(fp), at: now };
     }
+    return digReach.ok;
+  }
+
+  function drawDigHover(v) {
+    if (!digHover || pan || modalOpen || digLook(v.px) < 0.5) return;
+    var c = digCellAt(v, digHover.x, digHover.y);
+    if (!c) return;
+    var fp = DIG.footprint(c.x, c.y, toolCm);
+    var ok = digReachOf(fp);
+    var x0 = c.f.sx(fp.x0), y0 = c.f.sy(fp.y0);
+    var x1 = c.f.sx(fp.x1 + 1), y1 = c.f.sy(fp.y1 + 1);
     ctx.save();
-    ctx.fillStyle = PAPER;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1.15;
-    ctx.lineJoin = "miter";
-    ctx.lineCap = "butt";
-    ctx.setLineDash([]);
-
-    var s0 = worldToScreen(v, SHAFT.x0, SHAFT.y0);
-    var s1 = worldToScreen(v, SHAFT.x1, SHAFT.y1);
-    var c0 = worldToScreen(v, CHAMBER.x0, CHAMBER.y0);
-    var c1 = worldToScreen(v, CHAMBER.x1, CHAMBER.y1);
-    ctx.beginPath();
-    ctx.moveTo(s0.x, s0.y);
-    ctx.lineTo(s0.x, s1.y);
-    ctx.lineTo(s1.x, s1.y);
-    ctx.lineTo(s1.x, c1.y);
-    ctx.lineTo(c1.x, c1.y);
-    ctx.lineTo(c1.x, c0.y);
-    ctx.lineTo(s1.x, c0.y);
-    ctx.lineTo(s1.x, s0.y);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    var inset = 0.06;
-    ctx.lineWidth = 0.9;
-    wline(v, SHAFT.x0 + inset, 0.12, SHAFT.x0 + inset, SHAFT.y1 - 0.1);
-    wline(v, SHAFT.x1 - inset, 0.12, SHAFT.x1 - inset, SHAFT.y1 - 0.1);
-    var y;
-    for (y = 0.45; y < SHAFT.y1 - 0.25; y += 0.55) {
-      var xR = (y > CHAMBER.y0 && y < CHAMBER.y1) ? SHAFT.x1 - inset : SHAFT.x1;
-      wline(v, SHAFT.x0, y, xR, y);
+    ctx.strokeStyle = ok ? INK : FAINT;
+    ctx.lineWidth = 1;
+    ctx.setLineDash(ok ? [] : [3, 3]);
+    ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5, Math.max(1, Math.round(x1 - x0)), Math.max(1, Math.round(y1 - y0)));
+    var here = DIG.at(c.x, c.y);
+    var label = !ok ? "out of reach" : !here || here.mat === DIG.AIR ? "" :
+      here.name + (here.hitsLeft > 1 ? ", " + here.hitsLeft + " hits" : "");
+    if (label) {
+      setFont(12);
+      var tw = ctx.measureText(label).width;
+      var lx = Math.max(x0, x1) + 8, ly = Math.min(y0, y1) - 6;
+      ctx.fillStyle = PAPER;
+      ctx.fillRect(lx - 3, ly - 12, tw + 6, 16);
+      ctx.fillStyle = ok ? INK : FAINT;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText(label, lx, ly);
     }
-    wline(v, CHAMBER.x0, CHAMBER.y0 + 0.1, CHAMBER.x1 - 0.06, CHAMBER.y0 + 0.1);
-    wline(v, CHAMBER.x0, CHAMBER.y1 - 0.08, CHAMBER.x1 - 0.06, CHAMBER.y1 - 0.08);
-
-    ctx.strokeStyle = MID;
-    ctx.lineWidth = 0.8;
-    var wy = 2.02;
-    var wx = SHAFT.x0 + 0.1;
-    ctx.beginPath();
-    var a = worldToScreen(v, wx, wy);
-    ctx.moveTo(a.x, a.y);
-    while (wx < CHAMBER.x1 - 0.08) {
-      wx += 0.08;
-      a = worldToScreen(v, wx, wy + ((Math.round(wx * 12) % 2) ? 0.035 : -0.035));
-      ctx.lineTo(a.x, a.y);
-    }
-    ctx.stroke();
-
-    drawCage(v);
-    drawPump(v);
     ctx.restore();
   }
 
-  function drawCage(v) {
-    var x0 = SHAFT.x0 + 0.1;
-    var x1 = SHAFT.x1 - 0.1;
-    var y0 = 0.48;
-    var y1 = 1.22;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1;
-    wline(v, x0, y0, x1, y0);
-    wline(v, x0, y1, x1, y1);
-    wline(v, x0, y0, x0, y1);
-    wline(v, x1, y0, x1, y1);
-    var i;
-    for (i = 1; i <= 3; i++) wline(v, x0 + (x1 - x0) * i / 4, y0, x0 + (x1 - x0) * i / 4, y1);
-    var mid = (x0 + x1) / 2;
-    wline(v, mid, 0.06, mid, y0);
+  function digAt(sx, sy) {
+    var v = viewOf(currentWorldW());
+    if (digLook(v.px) < 0.5) return false;
+    var c = digCellAt(v, sx, sy);
+    if (!c) return false;
+    DIG.dig(c.x, c.y, toolCm);
+    digReach.key = "";
+    return true;
   }
 
-  function drawPump(v) {
-    var x = CHAMBER.x0 + 0.06;
-    var y = CHAMBER.y1 - 0.12;
-    var w = 0.22;
-    var h = 0.16;
-    var a = worldToScreen(v, x, y - h);
-    var b = worldToScreen(v, x + w, y);
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
-    var c = worldToScreen(v, x + w * 0.72, y - h * 0.5);
-    var r = Math.abs(b.x - a.x) * 0.22;
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, Math.max(1.5, r), 0, Math.PI * 2);
-    ctx.stroke();
-    wline(v, x, y - h * 0.55, x - 0.1, y - h * 0.55);
+  function stepDig(now) {
+    if (simLast) simAcc += Math.min(0.1, (now - simLast) / 1000);
+    simLast = now;
+    var n = 0;
+    while (simAcc >= 1 / 60 && n < 3) {
+      DIG.step();
+      simAcc -= 1 / 60;
+      n++;
+    }
+    if (n === 3) simAcc = 0;
+  }
+
+  function movePan(p) {
+    var v = viewOf(currentWorldW());
+    panX = clamp(pan.panX - (p.x - pan.x) / v.px, -R, R);
+    scrollT = scrollForTop(v.worldW, pan.top - (p.y - pan.y) / (v.px * COS_E));
   }
 
   var modalOpen = false;
@@ -3915,6 +3904,8 @@
     logW = Math.log10(worldW);
     var v = viewOf(worldW);
     var tb = titleBlock(v.box);
+    digFollow(v);
+    digPaint.recolor();
 
     ctx.clearRect(0, 0, cssW, cssH);
     ctx.fillStyle = PAPER;
@@ -3924,6 +3915,7 @@
     ctx.save();
     clipSheet(v.box);
     drawCutGlobe(v, faceView(v), tb);
+    drawDigHover(v);
     ctx.restore();
 
     drawFrame(v, tb);
@@ -3935,7 +3927,7 @@
 
   function zoomBy(dy) {
     var y = pointerY == null ? cssH / 3 : pointerY;
-    zoomAt(dy, y);
+    zoomAt(dy, y, pointerX);
   }
 
   function currentWorldW() {
@@ -3945,11 +3937,12 @@
     return clamp(Math.pow(10, logW), closeWidth(), farWidth(aspect));
   }
 
-  /* Wheel zoom is vertical only, about the depth under the pointer. The
-     horizon stays one third down when the pointer is on the surface. The
-     deep stop is the centre in the middle of the screen. */
-  function zoomAt(dy, screenY) {
+  /* Wheel zoom is about the point under the pointer. The horizon stays
+     one third down when the pointer is on the surface. The deep stop is
+     the centre in the middle of the screen. */
+  function zoomAt(dy, screenY, screenX) {
     var before = viewOf(currentWorldW());
+    var across = screenX == null ? null : before.left + (screenX - before.box.x) / before.px;
     var ay = cutAnchor(before.box);
     screenY = ay + (screenY - ay) / COS_E;
     var depth = before.top + (screenY - before.box.y) / before.px;
@@ -3969,6 +3962,9 @@
       if (top > top1) top = top1;
     }
     scrollT = scrollForTop(worldW, top);
+    if (across !== null) {
+      panX = clamp(across - (screenX - before.box.x) * worldW / before.box.w + worldW / 2, -R, R);
+    }
   }
 
   function scrollForTop(worldW, top) {
@@ -3993,6 +3989,7 @@
     else if (name === "globe" || name === "3") lock = "globe";
     else return false;
     scrollT = 0;
+    panX = 0;
     return true;
   }
 
@@ -4032,6 +4029,7 @@
       }
     }
     fpsLast = now;
+    stepDig(now);
     draw();
     requestAnimationFrame(onFrame);
   }
@@ -4046,6 +4044,7 @@
     else if (event.deltaMode === 2) dy *= 400;
     dy *= event.shiftKey ? 1 : wheelSpeed;
     pointerY = event.clientY;
+    pointerX = event.clientX;
     if (event.altKey) scrollByWheel(dy);
     else zoomBy(dy);
   }, { passive: false });
@@ -4057,6 +4056,12 @@
   window.addEventListener("mousemove", function (event) {
     var p = pointerXY(event);
     pointerY = p.y;
+    pointerX = p.x;
+    digHover = null;
+    if (pan) {
+      movePan(p);
+      return;
+    }
     if (modalOpen) {
       canvas.style.cursor = hitRect(modalClose, p.x, p.y) ? "pointer" : "default";
       return;
@@ -4084,13 +4089,20 @@
       canvas.style.cursor = "ns-resize";
     } else {
       stripPointer = null;
+      digHover = p;
       canvas.style.cursor = "crosshair";
     }
   });
 
   window.addEventListener("mousedown", function (event) {
-    if (event.button !== 0) return;
     var p = pointerXY(event);
+    if ((event.button === 1 || event.button === 2) && !modalOpen) {
+      pan = { x: p.x, y: p.y, panX: panX, top: viewOf(currentWorldW()).top };
+      canvas.style.cursor = "grabbing";
+      event.preventDefault();
+      return;
+    }
+    if (event.button !== 0) return;
     if (modalOpen) {
       if (!hitRect(modalBox, p.x, p.y) || hitRect(modalClose, p.x, p.y)) modalOpen = false;
       event.preventDefault();
@@ -4125,7 +4137,10 @@
       event.preventDefault();
       return;
     }
-    if (!pointerOnStrip(p.x, p.y)) return;
+    if (!pointerOnStrip(p.x, p.y)) {
+      if (digAt(p.x, p.y)) event.preventDefault();
+      return;
+    }
     stripDrag = true;
     stripPointer = p.y;
     scrollToDepth(stripDepthAt(stripGeom, p.y));
@@ -4135,9 +4150,13 @@
   window.addEventListener("mouseup", function () {
     stripDrag = false;
     sliderDrag = null;
+    if (pan) canvas.style.cursor = "crosshair";
+    pan = null;
   });
+  window.addEventListener("contextmenu", function (event) { event.preventDefault(); });
   document.addEventListener("mouseleave", function () {
     if (!stripDrag) stripPointer = null;
+    digHover = null;
   });
 
   window.addEventListener("keydown", function (event) {
@@ -4197,6 +4216,7 @@
   };
 
   applyTheme(readTheme());
+  digPaint = makeDigPaint(DIG, digColors());
   resize();
   readLocation();
   window.addEventListener("load", readLocation);
