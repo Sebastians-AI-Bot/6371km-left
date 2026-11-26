@@ -178,10 +178,12 @@ var DIG = (function () {
      which it could, so a pour is slow enough to follow by eye. A waiting
      grain keeps its chunk awake; a settled one does not. */
   var SAND_PACE = 0.25;
+  /* Everything else that falls moves at this share of its full speed. */
+  var REST_PACE = 0.5;
 
   function grain(i, x, y) {
     var sand = mat[i] === SAND;
-    var wait = sand && Math.random() > SAND_PACE;
+    var wait = Math.random() > (sand ? SAND_PACE : REST_PACE);
     if (y + 1 < H) {
       var j = i + W;
       var t = mat[j];
@@ -253,11 +255,12 @@ var DIG = (function () {
 
   function fluid(i, x, y, m) {
     var slow = m === OIL;
+    var wait = Math.random() > (slow ? 0.4 : 1) * REST_PACE;
     if (y + 1 < H) {
       var j = i + W;
       var t = mat[j];
       if (t === AIR || (m === WATER && t === OIL)) {
-        if (slow && Math.random() < 0.6) { mark(x, y); return; }
+        if (wait) { mark(x, y); return; }
         var to = j;
         if (t === AIR) moveCell(i, to = fallTo(j, y));
         else swapCell(i, j);
@@ -270,7 +273,7 @@ var DIG = (function () {
         var nx = x + d;
         if (nx < 0 || nx >= W) continue;
         if (mat[i + d] === AIR && mat[j + d] === AIR) {
-          if (slow && Math.random() < 0.6) { mark(x, y); return; }
+          if (wait) { mark(x, y); return; }
           moveCell(i, j + d);
           mark(nx, y + 1);
           vacated(x, y);
@@ -297,7 +300,7 @@ var DIG = (function () {
         if (y + 1 < H && mat[c + W] === AIR) { drop = true; break; }
       }
       if (target >= 0 && (drop || pushed)) {
-        if (slow && Math.random() < 0.6) { mark(x, y); return; }
+        if (wait) { mark(x, y); return; }
         moveCell(i, target);
         mark(tx, y);
         vacated(x, y);
@@ -348,7 +351,7 @@ var DIG = (function () {
 
   function newBody(m, cells, isAwake) {
     var id = bodies.length;
-    var b = { id: id, mat: m, cells: cells, awake: !!isAwake, vy: 0 };
+    var b = { id: id, mat: m, cells: cells, awake: !!isAwake, vy: 0, carry: 0 };
     bodies.push(b);
     for (var k = 0; k < cells.length; k++) {
       var i = cells[k];
@@ -457,8 +460,11 @@ var DIG = (function () {
     for (var k = 0; k < list.length; k++) {
       var b = bodies[list[k]];
       if (!b || !b.awake || !b.cells.length) continue;
-      b.vy = Math.min(b.vy + 0.3, 6);
-      var steps = Math.max(1, b.vy | 0);
+      b.vy = Math.min(b.vy + 0.15, 3);
+      b.carry += b.vy;
+      var steps = b.carry | 0;
+      if (!steps) { awake.push(b.id); continue; }
+      b.carry -= steps;
       var moved = false;
       for (var s = 0; s < steps; s++) {
         if (tryMove(b, 0, 1)) moved = true;
@@ -469,7 +475,7 @@ var DIG = (function () {
           var d = Math.random() < 0.5 ? 1 : -1;
           moved = tryMove(b, d, 1) || tryMove(b, -d, 1) || tip(b, d) || tip(b, -d);
         }
-        b.vy = moved ? 1 : 0;
+        b.vy = moved ? 0.5 : 0;
       }
       if (moved) awake.push(b.id);
       else b.awake = false;
