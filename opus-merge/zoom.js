@@ -9,7 +9,8 @@
    panel sets both, and the wheel speed.
    Zoomed in, the centre face is ground to dig, cell by centimetre cell
    (../dig): left click hits it with the tool from the debug panel,
-   middle or right drag pans at any zoom. */
+   middle or right drag pans at any zoom. Digging widens the face so
+   10 m stay free on either side of the dug ground. */
 
 (function () {
   "use strict";
@@ -102,7 +103,10 @@
      centre face. Changed chunks are kept when the window moves on. */
   var DIG = makeDig(makeColumnWorld(COLUMN, POCKETS));
   var digPaint = null;
-  var toolCm = 10;
+  /* The tool in centimetres, and whether it takes everything at once. */
+  var toolW = 10;
+  var toolH = 10;
+  var destroyTool = false;
   var digHover = null;
   var digReach = { key: "", ok: false, at: 0 };
   var simLast = 0;
@@ -1456,6 +1460,9 @@
   var COS_E = Math.cos(CUT_ELEV);
   var SIN_E = Math.sin(CUT_ELEV);
   var FACE_HALF = PATCH / 2;
+  /* Digging widens the centre face, easing out to this half width. */
+  var faceGoal = FACE_HALF;
+  var FACE_ROOM = 10;
   var FACE_MIN = PATCH;
   var FACE_MAX = 1000000;
   var digUnit = COLUMN.length - 1;
@@ -2060,6 +2067,7 @@
   var debugBox = { x: 0, y: 0, w: 0, h: 0 };
   var debugHit = null;
   var machinesHit = null;
+  var toolModeHit = null;
   var digUpHit = null;
   var digDownHit = null;
   /* Shift turns the wheel at 1×, whatever the slider says. */
@@ -2070,14 +2078,20 @@
     {
       label: "2D width", min: FACE_MIN, max: FACE_MAX,
       get: function () { return FACE_HALF * 2; },
-      set: function (w) { FACE_HALF = w / 2; },
+      set: function (w) { FACE_HALF = faceGoal = w / 2; },
       text: function (w) { return formatLength(w); }
     },
     {
-      label: "tool", min: 1, max: 100,
-      get: function () { return toolCm; },
-      set: function (cm) { toolCm = clamp(Math.round(cm), 1, 100); },
-      text: function (cm) { return cm >= 100 ? "1 m" : cm + " cm"; }
+      label: "tool width", min: 0.01, max: 10,
+      get: function () { return toolW / 100; },
+      set: function (m) { toolW = clamp(Math.round(m * 100), 1, 1000); },
+      text: function (m) { return formatLength(m); }
+    },
+    {
+      label: "tool height", min: 0.01, max: 10,
+      get: function () { return toolH / 100; },
+      set: function (m) { toolH = clamp(Math.round(m * 100), 1, 1000); },
+      text: function (m) { return formatLength(m); }
     },
     {
       label: "wheel speed", min: 0.25, max: 4,
@@ -2129,11 +2143,12 @@
     var controlH = 22;
     var sliderH = 34;
     var w = Math.ceil(maxW + pad * 2);
-    var h = debugOpen ? headH + 4 + rows.length * rowH + SLIDERS.length * sliderH + controlH * 2 : headH;
+    var h = debugOpen ? headH + 4 + rows.length * rowH + SLIDERS.length * sliderH + controlH * 3 : headH;
     var x = 10;
     var y = 42;
     debugHit = { x: x, y: y, w: w, h: headH };
     machinesHit = debugOpen ? { x: x, y: y + h - controlH, w: w, h: controlH } : null;
+    toolModeHit = debugOpen ? { x: x, y: y + h - controlH * 3, w: w, h: controlH } : null;
     var digY = y + h - controlH * 2;
     digUpHit = debugOpen ? { x: x + w - pad - ctx.measureText(digText).width - 4, y: digY, w: 22, h: controlH } : null;
     digDownHit = debugOpen ? { x: x + w - pad - 18, y: digY, w: 22, h: controlH } : null;
@@ -2215,6 +2230,8 @@
     ctx.lineTo(x + w, digY);
     ctx.moveTo(x, machinesHit.y);
     ctx.lineTo(x + w, machinesHit.y);
+    ctx.moveTo(x, toolModeHit.y);
+    ctx.lineTo(x + w, toolModeHit.y);
     ctx.stroke();
     setFont(12, 500);
     ctx.fillStyle = INK;
@@ -2229,6 +2246,10 @@
     ctx.fillText("machines", x + pad, machinesHit.y + controlH / 2);
     ctx.textAlign = "right";
     ctx.fillText("open", x + w - pad, machinesHit.y + controlH / 2);
+    ctx.textAlign = "left";
+    ctx.fillText("tool", x + pad, toolModeHit.y + controlH / 2);
+    ctx.textAlign = "right";
+    ctx.fillText(destroyTool ? "destroys all" : "digs", x + w - pad, toolModeHit.y + controlH / 2);
     ctx.restore();
   }
 
@@ -2595,7 +2616,7 @@
     if (!digHover || pan || modalOpen || digLook(v.px) < 0.5) return;
     var c = digCellAt(v, digHover.x, digHover.y);
     if (!c) return;
-    var fp = DIG.footprint(c.x, c.y, toolCm);
+    var fp = DIG.footprint(c.x, c.y, toolW, toolH);
     var ok = digReachOf(fp);
     var x0 = c.f.sx(fp.x0), y0 = c.f.sy(fp.y0);
     var x1 = c.f.sx(fp.x1 + 1), y1 = c.f.sy(fp.y1 + 1);
@@ -2605,8 +2626,12 @@
     ctx.setLineDash(ok ? [] : [3, 3]);
     ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5, Math.max(1, Math.round(x1 - x0)), Math.max(1, Math.round(y1 - y0)));
     var here = DIG.at(c.x, c.y);
-    var label = !ok ? "out of reach" : !here || here.mat === DIG.AIR ? "" :
-      here.name + (here.hitsLeft > 1 ? ", " + here.hitsLeft + " hits" : "");
+    var parts = [];
+    if (here && here.mat !== DIG.AIR) {
+      parts.push(here.name + (ok && !destroyTool && here.hitsLeft > 1 ? ", " + here.hitsLeft + " hits" : ""));
+    }
+    if (!ok) parts.push("out of reach");
+    var label = parts.join(", ");
     if (label) {
       setFont(12);
       var tw = ctx.measureText(label).width;
@@ -2626,14 +2651,24 @@
     if (digLook(v.px) < 0.5) return false;
     var c = digCellAt(v, sx, sy);
     if (!c) return false;
-    DIG.dig(c.x, c.y, toolCm);
+    if (DIG.dig(c.x, c.y, toolW, toolH, destroyTool).ok) {
+      var o = DIG.origin();
+      var fp = DIG.footprint(c.x, c.y, toolW, toolH);
+      var reach = Math.max(Math.abs(o.x + fp.x0), Math.abs(o.x + fp.x1 + 1)) / 100;
+      faceGoal = clamp(Math.max(faceGoal, reach + FACE_ROOM), FACE_MIN / 2, FACE_MAX / 2);
+    }
     digReach.key = "";
     return true;
   }
 
   function stepDig(now) {
-    if (simLast) simAcc += Math.min(0.1, (now - simLast) / 1000);
+    var dt = simLast ? Math.min(0.1, (now - simLast) / 1000) : 0;
+    simAcc += dt;
     simLast = now;
+    if (FACE_HALF < faceGoal) {
+      FACE_HALF += Math.max(0.002, (faceGoal - FACE_HALF) * (1 - Math.exp(-dt / 0.35)));
+      if (FACE_HALF > faceGoal) FACE_HALF = faceGoal;
+    }
     var n = 0;
     while (simAcc >= 1 / 60 && n < 3) {
       DIG.step();
@@ -4000,7 +4035,7 @@
     var dig = digByName(q.get("dig"));
     if (dig >= 0) digUnit = dig;
     var face = Number(q.get("face"));
-    if (face > 0) FACE_HALF = clamp(face, FACE_MIN, FACE_MAX) / 2;
+    if (face > 0) FACE_HALF = faceGoal = clamp(face, FACE_MIN, FACE_MAX) / 2;
     var w = q.get("w");
     if (w && isFinite(Number(w)) && Number(w) > 0) {
       lock = null;
@@ -4079,7 +4114,7 @@
       canvas.style.cursor = "ew-resize";
       return;
     }
-    if (pointerOnDebug(p.x, p.y) || hitRect(machinesHit, p.x, p.y) || pointerOnTheme(p.x, p.y) ||
+    if (pointerOnDebug(p.x, p.y) || hitRect(machinesHit, p.x, p.y) || hitRect(toolModeHit, p.x, p.y) || pointerOnTheme(p.x, p.y) ||
       hitRect(digUpHit, p.x, p.y) || hitRect(digDownHit, p.x, p.y)) {
       canvas.style.cursor = "pointer";
       return;
@@ -4105,6 +4140,11 @@
     if (event.button !== 0) return;
     if (modalOpen) {
       if (!hitRect(modalBox, p.x, p.y) || hitRect(modalClose, p.x, p.y)) modalOpen = false;
+      event.preventDefault();
+      return;
+    }
+    if (hitRect(toolModeHit, p.x, p.y)) {
+      destroyTool = !destroyTool;
       event.preventDefault();
       return;
     }

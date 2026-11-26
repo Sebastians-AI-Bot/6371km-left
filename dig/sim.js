@@ -694,9 +694,13 @@ function makeDig(world) {
     }
   }
 
-  function footprint(cx, cy, tool) {
-    var x0 = Math.round(cx - tool / 2), y0 = Math.round(cy - tool / 2);
-    return { x0: x0, y0: y0, x1: x0 + tool - 1, y1: y0 + tool - 1 };
+  /* A tool `tw` cells wide and `th` tall (square when th is left out),
+     centred on (cx, cy). */
+  function footprint(cx, cy, tw, th) {
+    tw = Math.max(1, Math.round(tw));
+    th = Math.max(1, Math.round(th || tw));
+    var x0 = Math.round(cx - tw / 2), y0 = Math.round(cy - th / 2);
+    return { x0: x0, y0: y0, x1: x0 + tw - 1, y1: y0 + th - 1 };
   }
 
   function canReach(f) {
@@ -720,12 +724,13 @@ function makeDig(world) {
     vacated(i - y * W, y);
   }
 
-  function crack(f, tool) {
+  function crack(f) {
+    var tw = f.x1 - f.x0 + 1, th = f.y1 - f.y0 + 1;
     var lines = 2 + (Math.random() * 2 | 0);
     for (var l = 0; l < lines; l++) {
-      var x = f.x0 + Math.random() * tool, y = f.y0 + Math.random() * tool;
+      var x = f.x0 + Math.random() * tw, y = f.y0 + Math.random() * th;
       var a = Math.random() * Math.PI * 2;
-      var len = Math.max(2, tool * 0.7);
+      var len = Math.max(2, Math.min(tw, th) * 0.7);
       for (var s = 0; s < len; s++) {
         a += (Math.random() - 0.5) * 0.9;
         x += Math.cos(a);
@@ -742,10 +747,11 @@ function makeDig(world) {
     }
   }
 
-  /* One hit of a square tool `tool` cells across, centred on (cx, cy). */
-  function dig(cx, cy, tool) {
-    tool = Math.max(1, Math.round(tool));
-    var f = footprint(cx, cy, tool);
+  /* One hit of the tool (see footprint). With `destroy` everything under
+     it goes at once, however hard. */
+  function dig(cx, cy, tw, th, destroy) {
+    var f = footprint(cx, cy, tw, th);
+    var tool = Math.min(f.x1 - f.x0, f.y1 - f.y0) + 1;
     if (!canReach(f)) return { ok: false };
     var x0 = Math.max(RING, f.x0), y0 = Math.max(RING, f.y0);
     var x1 = Math.min(W - 1 - RING, f.x1), y1 = Math.min(H - 1 - RING, f.y1);
@@ -757,7 +763,7 @@ function makeDig(world) {
         m = mat[i];
         if (m === AIR) continue;
         if (body[i]) { touched[body[i]] = (touched[body[i]] || 0) + 1; continue; }
-        if (isFluid(m) || (flag[i] & LOOSE)) { take(i); continue; }
+        if (destroy || isFluid(m) || (flag[i] & LOOSE)) { take(i); continue; }
         dmg[i] = Math.min(255, dmg[i] + 1);
         mark(x, y);
         if (dmg[i] >= HITS[m]) {
@@ -766,12 +772,12 @@ function makeDig(world) {
         } else hurt = true;
       }
     }
-    var area = tool * tool;
+    var area = (f.x1 - f.x0 + 1) * (f.y1 - f.y0 + 1);
     for (var key in touched) {
       var b = bodies.get(Number(key));
       if (!b) continue;
       var inside = touched[key];
-      if (b.cells.length <= area) {
+      if (!destroy && b.cells.length <= area) {
         if (inside * 2 >= b.cells.length) {
           for (var k = 0; k < b.cells.length; k++) take(b.cells[k]);
           bodies.delete(b.id);
@@ -785,6 +791,7 @@ function makeDig(world) {
           if (x >= x0 && x <= x1 && y >= y0 && y <= y1) take(i);
           else keep.push(i);
         }
+        if (!keep.length) { bodies.delete(b.id); continue; }
         b.cells = keep;
         wakeBody(b.id);
       }
@@ -812,7 +819,7 @@ function makeDig(world) {
       }
     }
     if (broken.length) fragment(broken, STONE, Math.max(3, Math.round(tool / 3)), 0.35);
-    if (hurt) crack(f, tool);
+    if (hurt) crack(f);
     settle(x0 - SETTLE_PAD, y0 - SETTLE_PAD, x1 + SETTLE_PAD, y1 + SETTLE_PAD);
     markRect(x0 - 2, y0 - 2, x1 + 2, y1 + 2);
     return { ok: true };
