@@ -41,7 +41,7 @@ function makeDig(world) {
      not made), and flags. `halo` says all eight neighbours are made, which
      a chunk needs before anything in it moves. */
   var chunkX, chunkY, nb, isLive, edited, dirty, halo, slow, active, next, activeBox, nextBox;
-  var activeLo, activeHi, nextLo, nextHi;
+  var activeLo, activeHi, nextLo, nextHi, dirtyBox;
   var slots = new Map();
   var activeList = [], nextList = [], dirtyList = [];
   var DX = [1, -1, 0, 0], DY = [0, 0, -1, 1], OPP = [1, 0, 3, 2];
@@ -89,6 +89,7 @@ function makeDig(world) {
     dirty = more(dirty, Uint8Array, n); halo = more(halo, Uint8Array, n); slow = more(slow, Uint8Array, n);
     active = more(active, Uint8Array, n); next = more(next, Uint8Array, n);
     activeBox = more(activeBox, Int8Array, n * 4); nextBox = more(nextBox, Int8Array, n * 4);
+    dirtyBox = more(dirtyBox, Int8Array, n * 4);
     activeLo = more(activeLo, Int8Array, n * CS); activeHi = more(activeHi, Int8Array, n * CS);
     nextLo = more(nextLo, Int8Array, n * CS); nextHi = more(nextHi, Int8Array, n * CS);
     cap = n;
@@ -142,7 +143,7 @@ function makeDig(world) {
       nb[s * 4 + d] = n;
       if (n >= 0) nb[n * 4 + OPP[d]] = s;
     }
-    setDirty(s);
+    setDirty(s, 0, 0, 31, 31);
     addBodyCells(s);
     return s;
   }
@@ -202,11 +203,20 @@ function makeDig(world) {
     return REACH[mat[i]] > 0 && !(flag[i] & (LOOSE | FIXED)) && body[i] === 0;
   }
 
-  function setDirty(s) {
+  /* Cells x0..x1, y0..y1 of chunk s changed since the last takeDirty;
+     dirtyBox holds the bounds of them all. */
+  function setDirty(s, x0, y0, x1, y1) {
+    var k = s * 4;
     if (!dirty[s]) {
       dirty[s] = 1;
       dirtyList.push(s);
+      dirtyBox[k] = x0; dirtyBox[k + 1] = y0; dirtyBox[k + 2] = x1; dirtyBox[k + 3] = y1;
+      return;
     }
+    if (x0 < dirtyBox[k]) dirtyBox[k] = x0;
+    if (y0 < dirtyBox[k + 1]) dirtyBox[k + 1] = y0;
+    if (x1 > dirtyBox[k + 2]) dirtyBox[k + 2] = x1;
+    if (y1 > dirtyBox[k + 3]) dirtyBox[k + 3] = y1;
   }
 
   /* Wakes cells x0..x1, y0..y1 of chunk s (chunk-local) for the next
@@ -242,11 +252,10 @@ function makeDig(world) {
 
   /* A cell changed: it and its eight neighbours get another look. */
   function mark(i) {
-    var s = i >> 10;
-    setDirty(s);
+    var s = i >> 10, lx = i & 31, ly = (i >> 5) & 31;
+    setDirty(s, lx, ly, lx, ly);
     if (!edited[s]) { edited[s] = 1; editedCount++; }
     if (!halo[s]) ensureHalo(s);
-    var lx = i & 31, ly = (i >> 5) & 31;
     var x0 = lx ? lx - 1 : 0, x1 = lx < 31 ? lx + 1 : 31;
     var y0 = ly ? ly - 1 : 0, y1 = ly < 31 ? ly + 1 : 31;
     touch(s, x0, y0, x1, y1);
@@ -283,11 +292,12 @@ function makeDig(world) {
       for (var cx = x0 >> 5; cx <= x1 >> 5; cx++) {
         var s = ensure(cx, cy);
         if (s < 0) continue;
-        setDirty(s);
+        var bx = cx * CS, by = cy * CS;
+        var ax = Math.max(x0, bx) - bx, ay = Math.max(y0, by) - by, bx1 = Math.min(x1, bx + 31) - bx, by1 = Math.min(y1, by + 31) - by;
+        setDirty(s, ax, ay, bx1, by1);
         if (!edited[s]) { edited[s] = 1; editedCount++; }
         if (!halo[s]) ensureHalo(s);
-        var bx = cx * CS, by = cy * CS;
-        touch(s, Math.max(x0, bx) - bx, Math.max(y0, by) - by, Math.min(x1, bx + 31) - bx, Math.min(y1, by + 31) - by);
+        touch(s, ax, ay, bx1, by1);
       }
     }
   }
@@ -1578,6 +1588,9 @@ function makeDig(world) {
     isLive: function (s) { return isLive[s] === 1; },
     isEdited: function (s) { return edited[s] === 1; },
     /* Slots changed since the last call. */
+    /* Changed cells of each slot from takeDirty, chunk-local x0, y0, x1,
+       y1 at slot * 4. */
+    get dirtyBox() { return dirtyBox; },
     takeDirty: function () {
       var list = dirtyList;
       dirtyList = [];

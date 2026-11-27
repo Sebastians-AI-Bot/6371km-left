@@ -20,6 +20,9 @@ function makeDigPaint(S, colors, view) {
   var mat = new Uint8Array(W * H), flag = new Uint8Array(W * H), shade = new Uint8Array(W * H);
   var base = new Uint8Array(W * H), body = new Int32Array(W * H);
   var dirty = new Uint8Array(CW * CH), edited = new Uint8Array(CW * CH);
+  /* Cells of each dirty window chunk to paint again, chunk-local x0, y0,
+     x1, y1 at chunk * 4. */
+  var dirtyBox = new Int8Array(CW * CH * 4);
   var AIR = S.AIR, SAND = S.SAND, TOPSOIL = S.TOPSOIL, CLAY = S.CLAY, GRAVEL = S.GRAVEL;
   var STONE = S.STONE, WATER = S.WATER, OIL = S.OIL;
   var LOOSE = S.LOOSE, WET = S.WET, CRACK = S.CRACK;
@@ -45,7 +48,7 @@ function makeDigPaint(S, colors, view) {
     P_PAPER = packHex(c.paper); P_OIL = packHex(c.oil);
     WATER_RGB = rgb(c.water);
     catchUp();
-    dirty.fill(1);
+    for (var c = 0; c < CW * CH; c++) need(c, 0, 0, CS - 1, CS - 1);
     sheets.forEach(function (sh) {
       for (var k = 0; k < SHEET * SHEET; k++) if (sh.has[k]) stale(sh.sx * SHEET + k % SHEET, sh.sy * SHEET + ((k / SHEET) | 0));
     });
@@ -57,11 +60,39 @@ function makeDigPaint(S, colors, view) {
     cv.height = H;
     var c = cv.getContext("2d");
     var img = c.createImageData(W, H);
-    return { cv: cv, ctx: c, img: img, px: new Uint32Array(img.data.buffer) };
+    return { cv: cv, ctx: c, img: img, px: new Uint32Array(img.data.buffer),
+      due: [], over: false, box: [W, H, 0, 0] };
   }
-  var lines = layer();
+  /* `cells` is the line-art over the fills, for views where a cell is
+     a few pixels; closer in only the fills are blitted under strokes. */
+  var cells = layer();
   var fills = layer();
   var overlay = layer();
+  /* Water's alpha, and its alpha laid over itself as the line pixel
+     over the fill pixel. */
+  var WATER_A = 215, WATER_TWICE = 255 - Math.round((255 - WATER_A) * (255 - WATER_A) / 255);
+
+  /* Each upload to a canvas has a cost of its own, so a layer's changed
+     pixels go up only when it is drawn. Past MAX_DUE rects only their
+     bounds are kept. */
+  var MAX_DUE = 64;
+  function due(l, x, y, w, h) {
+    var b = l.box;
+    if (x < b[0]) b[0] = x;
+    if (y < b[1]) b[1] = y;
+    if (x + w > b[2]) b[2] = x + w;
+    if (y + h > b[3]) b[3] = y + h;
+    if (l.due.length < MAX_DUE * 4) l.due.push(x, y, w, h);
+    else l.over = true;
+  }
+  function upload(l) {
+    var d = l.due, b = l.box;
+    if (l.over) l.ctx.putImageData(l.img, 0, 0, b[0], b[1], b[2] - b[0], b[3] - b[1]);
+    else for (var k = 0; k < d.length; k += 4) l.ctx.putImageData(l.img, 0, 0, d[k], d[k + 1], d[k + 2], d[k + 3]);
+    d.length = 0;
+    l.over = false;
+    b[0] = W; b[1] = H; b[2] = b[3] = 0;
+  }
   var SHEET = 8, SP = SHEET * CS, SHEET_BIAS = 1 << 22;
   var sheets = new Map(), queue = [];
   /* Chunks redrawn on the sheets per frame, oldest change first; the rest
@@ -71,6 +102,19 @@ function makeDigPaint(S, colors, view) {
      sheets like the rest and are copied in once the cells show again. */
   var far = false, behind = new Uint8Array(CW * CH);
   setColors(colors);
+
+  function need(c, x0, y0, x1, y1) {
+    var k = c * 4;
+    if (!dirty[c]) {
+      dirty[c] = 1;
+      dirtyBox[k] = x0; dirtyBox[k + 1] = y0; dirtyBox[k + 2] = x1; dirtyBox[k + 3] = y1;
+      return;
+    }
+    if (x0 < dirtyBox[k]) dirtyBox[k] = x0;
+    if (y0 < dirtyBox[k + 1]) dirtyBox[k + 1] = y0;
+    if (x1 > dirtyBox[k + 2]) dirtyBox[k + 2] = x1;
+    if (y1 > dirtyBox[k + 3]) dirtyBox[k + 3] = y1;
+  }
 
   function differs(i, j) {
     if (mat[i] !== mat[j]) return true;
@@ -96,7 +140,7 @@ function makeDigPaint(S, colors, view) {
 
   function waterTint(sh) {
     var f = 1 + (sh - 128) / 128 * 0.03;
-    return pack(WATER_RGB[0] * f | 0, WATER_RGB[1] * f | 0, WATER_RGB[2] * f | 0, 215);
+    return pack(WATER_RGB[0] * f | 0, WATER_RGB[1] * f | 0, WATER_RGB[2] * f | 0, WATER_A);
   }
 
   function hatch(m, i, x, y) {
@@ -134,31 +178,34 @@ function makeDigPaint(S, colors, view) {
   }
 
   function paintRect(x0, y0, x1, y1) {
-    var lp = lines.px, fp = fills.px, op = overlay.px;
+    var cp = cells.px, fp = fills.px, op = overlay.px;
     for (var y = y0; y <= y1; y++) {
       var row = y * W;
       for (var x = x0; x <= x1; x++) {
-        var i = row + x;
-        lp[i] = lineColor(i, x, y);
-        fp[i] = mat[i] === WATER ? lp[i] : (flag[i] & WET) ? P_WET : 0;
+        var i = row + x, lc = lineColor(i, x, y);
+        if (mat[i] === WATER) {
+          fp[i] = lc;
+          cp[i] = (lc & 0xffffff) | (WATER_TWICE << 24);
+        } else {
+          fp[i] = (flag[i] & WET) ? P_WET : 0;
+          cp[i] = lc || fp[i];
+        }
         op[i] = changed(i, x, y);
         var s = mat[i] === OIL ? 1 : 0;
         if (s !== oilSeen[i]) { oilSeen[i] = s; oilDirty = true; }
       }
     }
-    var w = x1 - x0 + 1, h = y1 - y0 + 1;
-    lines.ctx.putImageData(lines.img, 0, 0, x0, y0, w, h);
-    fills.ctx.putImageData(fills.img, 0, 0, x0, y0, w, h);
-    overlay.ctx.putImageData(overlay.img, 0, 0, x0, y0, w, h);
   }
 
-  /* Copies window chunk (lx, ly) from the world. */
-  function pull(lx, ly) {
+  /* Copies window chunk (lx, ly) from the world, or with `box` (an array
+     and offset into it) only those of its cells, chunk-local x0, y0, x1,
+     y1. */
+  function pull(lx, ly, box, k) {
     var c = ly * CW + lx, sl = S.ensure(ox / CS + lx, oy / CS + ly);
     var w = Math.min(CS, W - lx * CS), h = Math.min(CS, H - ly * CS);
     var j = ly * CS * W + lx * CS;
-    dirty[c] = 1;
     behind[c] = 0;
+    if (sl < 0 || !box) need(c, 0, 0, w - 1, h - 1);
     if (sl < 0) {
       for (var r = 0; r < h; r++, j += W) {
         mat.fill(STONE, j, j + w); base.fill(STONE, j, j + w);
@@ -167,11 +214,19 @@ function makeDigPaint(S, colors, view) {
       edited[c] = 0;
       return;
     }
-    var sm = S.mat, sf = S.flag, ss = S.shade, sb = S.base, sy = S.body;
-    for (var y = 0, i = sl << 10; y < h; y++, i += CS, j += W) {
-      mat.set(sm.subarray(i, i + w), j); flag.set(sf.subarray(i, i + w), j);
-      shade.set(ss.subarray(i, i + w), j); base.set(sb.subarray(i, i + w), j);
-      body.set(sy.subarray(i, i + w), j);
+    var x0 = 0, y0 = 0, x1 = w - 1, y1 = h - 1;
+    if (box) {
+      x0 = box[k]; y0 = box[k + 1];
+      x1 = Math.min(x1, box[k + 2]); y1 = Math.min(y1, box[k + 3]);
+      if (x1 < x0 || y1 < y0) return;
+      need(c, x0, y0, x1, y1);
+    }
+    var sm = S.mat, sf = S.flag, ss = S.shade, sb = S.base, sy = S.body, n = x1 - x0 + 1;
+    j += y0 * W + x0;
+    for (var y = y0, i = (sl << 10) + y0 * CS + x0; y <= y1; y++, i += CS - n, j += W - n) {
+      for (var x = 0; x < n; x++, i++, j++) {
+        mat[j] = sm[i]; flag[j] = sf[i]; shade[j] = ss[i]; base[j] = sb[i]; body[j] = sy[i];
+      }
     }
     edited[c] = S.isEdited(sl) ? 1 : 0;
   }
@@ -189,7 +244,7 @@ function makeDigPaint(S, colors, view) {
     behind[c] = 1;
     var w = Math.min(CS, W - lx * CS), h = Math.min(CS, H - ly * CS), j = ly * CS * W + lx * CS;
     for (var r = 0; r < h; r++, j += W) overlay.px.fill(0, j, j + w);
-    overlay.ctx.putImageData(overlay.img, 0, 0, lx * CS, ly * CS, w, h);
+    due(overlay, lx * CS, ly * CS, w, h);
     tile(cx, cy, false);
   }
 
@@ -207,32 +262,48 @@ function makeDigPaint(S, colors, view) {
     isFar = !!isFar;
     if (far && !isFar) catchUp();
     far = isFar;
-    var list = S.takeDirty(), k;
+    var list = S.takeDirty(), box = S.dirtyBox, k;
     for (k = 0; k < list.length; k++) {
       var sl = list[k];
       if (!S.isLive(sl)) continue;
       var c = S.chunkOf(sl), lx = c.cx - ox / CS, ly = c.cy - oy / CS;
       if (lx >= 0 && ly >= 0 && lx < CW && ly < CH) {
-        if (!far) pull(lx, ly);
+        if (!far) pull(lx, ly, box, sl * 4);
         else if (S.isEdited(sl)) hide(lx, ly);
       } else if (S.isEdited(sl)) stale(c.cx, c.cy);
     }
+    /* Each dirty box is painted with a cell's margin, as a cell's lines
+       depend on its neighbours; each run of dirty chunks along a row goes
+       up as one rect. */
     for (var cy = 0; cy < CH; cy++) {
       var cx = 0;
       while (cx < CW) {
-        if (!dirty[cy * CW + cx]) { cx++; continue; }
-        var start = cx;
-        while (cx < CW && dirty[cy * CW + cx]) { dirty[cy * CW + cx] = 0; cx++; }
-        paintRect(Math.max(0, start * CS - 1), Math.max(0, cy * CS - 1),
-          Math.min(W - 1, cx * CS), Math.min(H - 1, cy * CS + CS));
+        c = cy * CW + cx;
+        if (!dirty[c]) { cx++; continue; }
+        var ux0 = W, uy0 = H, ux1 = -1, uy1 = -1;
+        for (; cx < CW && dirty[c]; cx++, c++) {
+          dirty[c] = 0;
+          k = c * 4;
+          var x0 = Math.max(0, cx * CS + dirtyBox[k] - 1), y0 = Math.max(0, cy * CS + dirtyBox[k + 1] - 1);
+          var x1 = Math.min(W - 1, cx * CS + dirtyBox[k + 2] + 1), y1 = Math.min(H - 1, cy * CS + dirtyBox[k + 3] + 1);
+          paintRect(x0, y0, x1, y1);
+          if (x0 < ux0) ux0 = x0;
+          if (y0 < uy0) uy0 = y0;
+          if (x1 > ux1) ux1 = x1;
+          if (y1 > uy1) uy1 = y1;
+        }
+        var w = ux1 - ux0 + 1, h = uy1 - uy0 + 1;
+        due(cells, ux0, uy0, w, h);
+        due(fills, ux0, uy0, w, h);
+        due(overlay, ux0, uy0, w, h);
       }
     }
   }
 
   /* Oil is drawn as one smooth shape: the cells are blurred into a field
      and its 0.5 contour traced with marching squares. Walls count as half
-     oil so the shape meets them flush, and the fill is clipped to open
-     cells so it never covers the ground. */
+     oil so the shape meets them flush, and the fill is clipped to air and
+     oil cells so it never covers the ground or the water. */
   var WALL = 0.45, LEVEL = 0.5;
   var oilSeen = new Uint8Array(W * H);
   var oilDirty = true, oilPath = null, oilClip = null;
@@ -279,8 +350,9 @@ function makeDigPaint(S, colors, view) {
         var m = x < w ? mat[(y0 + y) * W + x0 + x] : STONE;
         var openCell = open(m);
         if (x < w) f[y * w + x] = m === OIL ? 1 : openCell ? 0 : WALL;
-        if (openCell && run < 0) run = x;
-        else if (!openCell && run >= 0) { oilClip.rect(x0 + run, y0 + y, x - run, 1); run = -1; }
+        var bare = m === AIR || m === OIL;
+        if (bare && run < 0) run = x;
+        else if (!bare && run >= 0) { oilClip.rect(x0 + run, y0 + y, x - run, 1); run = -1; }
       }
     }
     blur3(f, tmp, w, h);
@@ -352,6 +424,7 @@ function makeDigPaint(S, colors, view) {
 
   function blit(ctx, l, v) {
     if (v.x1 <= v.x0 || v.y1 <= v.y0) return;
+    if (l.due.length) upload(l);
     ctx.imageSmoothingEnabled = Math.min(v.sx, v.sy) < 1;
     var w = v.x1 - v.x0, h = v.y1 - v.y0;
     ctx.drawImage(l.cv, v.x0, v.y0, w, h, v.x0, v.y0, w, h);
@@ -421,10 +494,14 @@ function makeDigPaint(S, colors, view) {
   function draw(ctx, vectorAt) {
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
     var v = viewOf(ctx);
-    blit(ctx, fills, v);
-    drawOil(ctx);
-    if (Math.min(v.sx, v.sy) >= (vectorAt || 4) * dpr) strokeLines(ctx, v, dpr);
-    else blit(ctx, lines, v);
+    if (Math.min(v.sx, v.sy) >= (vectorAt || 4) * dpr) {
+      blit(ctx, fills, v);
+      drawOil(ctx);
+      strokeLines(ctx, v, dpr);
+    } else {
+      blit(ctx, cells, v);
+      drawOil(ctx);
+    }
   }
 
   function sheetOf(cx, cy, make) {
@@ -555,10 +632,12 @@ function makeDigPaint(S, colors, view) {
     [mat, flag, shade, base, body, oilSeen].forEach(function (a) { shiftPx(a, W, H, sx, sy); });
     shiftPx(edited, CW, CH, scx, scy);
     shiftPx(dirty, CW, CH, scx, scy);
+    shiftPx(dirtyBox, CW * 4, CH, scx * 4, scy);
     shiftPx(behind, CW, CH, scx, scy);
-    [lines, fills, overlay].forEach(function (l) {
+    [cells, fills, overlay].forEach(function (l) {
       shiftPx(l.px, W, H, sx, sy);
-      l.ctx.putImageData(l.img, 0, 0);
+      due(l, 0, 0, W, H);
+      l.over = true;
     });
     for (cy = 0; cy < CH; cy++) {
       for (cx = 0; cx < CW; cx++) {
