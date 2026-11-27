@@ -103,16 +103,28 @@
      centre face. Changed chunks are kept when the window moves on. */
   var DIG = makeDig(makeColumnWorld(COLUMN, POCKETS));
   var digPaint = null;
-  /* The tool in centimetres, and whether it takes everything at once. */
+  /* The tool in centimetres, and which one (see TOOLS in ../dig/sim.js). */
   var toolW = 10;
   var toolH = 10;
-  var destroyTool = false;
+  var toolName = "pickaxe";
   /* Off, the tool only works once the cells are drawn. */
   var digFar = true;
+  /* Outlines the simulated window, its frozen edge and its awake chunks. */
+  var showSimArea = true;
   var digHover = null;
   var digReach = { key: "", ok: false, at: 0 };
   var simLast = 0;
   var simAcc = 0;
+  /* Sim steps per frame stop after this many milliseconds, so heavy
+     digging slows the sim down instead of the frame rate. */
+  var SIM_BUDGET = 6;
+  /* Smoothed milliseconds per frame, for the debug panel. */
+  var digTime = { sim: 0, paint: 0 };
+  var digStats = { active: 0, awake: 0 };
+
+  function timeDig(key, ms) {
+    digTime[key] += (ms - digTime[key]) * 0.1;
+  }
 
   function digColors() {
     return {
@@ -2061,7 +2073,10 @@
       ["scale", formatRawRatio(raw) + " \u2192 " + scaleText(v.worldW, v.box.w)],
       ["zoom", zoom],
       ["scroll", formatTickDepth(v.top + v.worldH / 2)],
-      ["fps", fpsLabel]
+      ["fps", fpsLabel],
+      ["sim", digTime.sim.toFixed(1) + " ms"],
+      ["dig paint", digTime.paint.toFixed(1) + " ms"],
+      ["awake", digStats.active + " chunks, " + digStats.awake + " clumps"]
     ];
   }
 
@@ -2070,7 +2085,10 @@
   var debugHit = null;
   var machinesHit = null;
   var toolModeHit = null;
+  var toolPrevHit = null;
+  var toolNextHit = null;
   var digFarHit = null;
+  var simAreaHit = null;
   var digUpHit = null;
   var digDownHit = null;
   /* Shift turns the wheel at 1×, whatever the slider says. */
@@ -2160,14 +2178,18 @@
     var controlH = 22;
     var sliderH = 34;
     var w = Math.ceil(maxW + pad * 2);
-    var h = debugOpen ? headH + 4 + rows.length * rowH + SLIDERS.length * sliderH + controlH * 6 : headH;
+    var h = debugOpen ? headH + 4 + rows.length * rowH + SLIDERS.length * sliderH + controlH * 7 : headH;
     var x = 10;
     var y = 42;
     debugHit = { x: x, y: y, w: w, h: headH };
     machinesHit = debugOpen ? { x: x, y: y + h - controlH, w: w, h: controlH } : null;
-    toolModeHit = debugOpen ? { x: x, y: y + h - controlH * 3, w: w, h: controlH } : null;
-    digFarHit = debugOpen ? { x: x, y: y + h - controlH * 4, w: w, h: controlH } : null;
-    var fieldY = y + h - controlH * 6;
+    simAreaHit = debugOpen ? { x: x, y: y + h - controlH * 3, w: w, h: controlH } : null;
+    toolModeHit = debugOpen ? { x: x, y: y + h - controlH * 4, w: w, h: controlH } : null;
+    digFarHit = debugOpen ? { x: x, y: y + h - controlH * 5, w: w, h: controlH } : null;
+    var toolText = "\u2039  " + toolName + "  \u203a";
+    toolPrevHit = debugOpen ? { x: x + w - pad - ctx.measureText(toolText).width - 4, y: toolModeHit.y, w: 22, h: controlH } : null;
+    toolNextHit = debugOpen ? { x: x + w - pad - 18, y: toolModeHit.y, w: 22, h: controlH } : null;
+    var fieldY = y + h - controlH * 7;
     placeField(toolWField, x + w - pad - 78, fieldY + 2, debugOpen);
     placeField(toolHField, x + w - pad - 78, fieldY + controlH + 2, debugOpen);
     var digY = y + h - controlH * 2;
@@ -2255,6 +2277,8 @@
     ctx.lineTo(x + w, toolModeHit.y);
     ctx.moveTo(x, digFarHit.y);
     ctx.lineTo(x + w, digFarHit.y);
+    ctx.moveTo(x, simAreaHit.y);
+    ctx.lineTo(x + w, simAreaHit.y);
     ctx.moveTo(x, fieldY);
     ctx.lineTo(x + w, fieldY);
     ctx.moveTo(x, fieldY + controlH);
@@ -2276,11 +2300,15 @@
     ctx.textAlign = "left";
     ctx.fillText("tool", x + pad, toolModeHit.y + controlH / 2);
     ctx.textAlign = "right";
-    ctx.fillText(destroyTool ? "destroys all" : "digs", x + w - pad, toolModeHit.y + controlH / 2);
+    ctx.fillText(toolText, x + w - pad, toolModeHit.y + controlH / 2);
     ctx.textAlign = "left";
     ctx.fillText("zoomed out", x + pad, digFarHit.y + controlH / 2);
     ctx.textAlign = "right";
     ctx.fillText(digFar ? "digs" : "no tool", x + w - pad, digFarHit.y + controlH / 2);
+    ctx.textAlign = "left";
+    ctx.fillText("sim area", x + pad, simAreaHit.y + controlH / 2);
+    ctx.textAlign = "right";
+    ctx.fillText(showSimArea ? "shown" : "hidden", x + w - pad, simAreaHit.y + controlH / 2);
     ctx.textAlign = "left";
     ctx.fillText("tool width", x + pad, fieldY + controlH / 2);
     ctx.fillText("tool height", x + pad, fieldY + controlH * 1.5);
@@ -2605,9 +2633,12 @@
     return { x: x, y: y, f: f };
   }
 
+  var digPaintMs = 0;
+
   function drawDigCells(vp) {
     var cell = vp.px / 100;
     if (cell < 0.01) return;
+    var t0 = performance.now();
     var o = DIG.origin();
     var look = digLook(vp.px);
     ctx.save();
@@ -2628,6 +2659,7 @@
       digPaint.draw(ctx, 4);
     }
     ctx.restore();
+    digPaintMs += performance.now() - t0;
   }
 
   /* Keeps the window under the middle of the view while the cells can be
@@ -2676,11 +2708,17 @@
     ctx.strokeStyle = ok ? INK : FAINT;
     ctx.lineWidth = 1;
     ctx.setLineDash(ok ? [] : [3, 3]);
-    ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5, Math.max(3, Math.round(x1 - x0)), Math.max(3, Math.round(y1 - y0)));
-    var here = inside ? DIG.at(c.x, c.y) : groundAt(c);
+    var bw = Math.max(3, Math.round(x1 - x0)), bh = Math.max(3, Math.round(y1 - y0));
+    if (DIG.TOOLS[toolName].round) {
+      ctx.beginPath();
+      ctx.ellipse(Math.round(x0) + bw / 2, Math.round(y0) + bh / 2, bw / 2, bh / 2, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    } else ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5, bw, bh);
+    var here = inside ? DIG.at(c.x, c.y, toolName) : groundAt(c);
     var parts = [];
     if (here && here.mat !== DIG.AIR) {
-      parts.push(here.name + (ok && !destroyTool && here.hitsLeft > 1 ? ", " + here.hitsLeft + " hits" : ""));
+      parts.push(here.name + (here.tooHard ? ", too hard for the " + toolName
+        : ok && here.hitsLeft > 1 ? ", " + here.hitsLeft + " hits" : ""));
     }
     if (!ok) parts.push("out of reach");
     var label = parts.join(", ");
@@ -2698,6 +2736,45 @@
     ctx.restore();
   }
 
+  /* The simulated window on the face: its edge dashed, the frozen ring
+     inside it dotted, and the chunks scanned in the last substep shaded.
+     Outside the window the ground waits as it was left. */
+  function drawSimArea(v) {
+    var f = digFace(v);
+    var x0 = f.sx(0), y0 = f.sy(0), x1 = f.sx(DIG.W), y1 = f.sy(DIG.H);
+    if (x1 - x0 < 6) return;
+    var CS = DIG.CS, CW = DIG.CW, CH = DIG.CH, awake = DIG.awakeChunks(), ring = !!DIG.RING;
+    ctx.save();
+    ctx.fillStyle = INK;
+    ctx.globalAlpha = 0.07;
+    for (var cy = 0; cy < CH; cy++) {
+      for (var cx = 0; cx < CW; cx++) {
+        if (!awake[cy * CW + cx]) continue;
+        if (ring && (cx === 0 || cy === 0 || cx === CW - 1 || cy === CH - 1)) continue;
+        var ax = f.sx(cx * CS), ay = f.sy(cy * CS);
+        ctx.fillRect(ax, ay, f.sx((cx + 1) * CS) - ax, f.sy((cy + 1) * CS) - ay);
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = MID;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5, Math.round(x1 - x0), Math.round(y1 - y0));
+    if (ring) {
+      var r = DIG.RING;
+      var rx0 = f.sx(r), ry0 = f.sy(r), rx1 = f.sx(DIG.W - r), ry1 = f.sy(DIG.H - r);
+      ctx.strokeStyle = FAINT;
+      ctx.setLineDash([2, 3]);
+      ctx.strokeRect(Math.round(rx0) + 0.5, Math.round(ry0) + 0.5, Math.round(rx1 - rx0), Math.round(ry1 - ry0));
+    }
+    setFont(11);
+    ctx.fillStyle = MID;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "top";
+    ctx.fillText("simulated", Math.round(x1) - 5, Math.round(y0) + 5);
+    ctx.restore();
+  }
+
   /* Zoomed out the window is not under the view, so it is moved to the
      click first. */
   function digAt(sx, sy) {
@@ -2712,7 +2789,7 @@
       o = DIG.origin();
     }
     var cx = wx - o.x, cy = wy - o.y;
-    if (DIG.dig(cx, cy, toolW, toolH, destroyTool).ok) {
+    if (DIG.dig(cx, cy, toolW, toolH, toolName).ok) {
       var fp = DIG.footprint(cx, cy, toolW, toolH);
       var reach = Math.max(Math.abs(o.x + fp.x0), Math.abs(o.x + fp.x1 + 1)) / 100;
       faceGoal = clamp(Math.max(faceGoal, reach + FACE_ROOM), FACE_MIN / 2, FACE_MAX / 2);
@@ -2729,13 +2806,15 @@
       FACE_HALF += Math.max(0.002, (faceGoal - FACE_HALF) * (1 - Math.exp(-dt / 0.35)));
       if (FACE_HALF > faceGoal) FACE_HALF = faceGoal;
     }
-    var n = 0;
-    while (simAcc >= 1 / 60 && n < 3) {
+    var n = 0, t0 = performance.now();
+    while (simAcc >= 1 / 60 && n < 3 && performance.now() - t0 < SIM_BUDGET) {
       DIG.step();
       simAcc -= 1 / 60;
       n++;
     }
-    if (n === 3) simAcc = 0;
+    if (simAcc >= 1 / 60) simAcc = 0;
+    timeDig("sim", performance.now() - t0);
+    digStats = DIG.stats();
   }
 
   function movePan(p) {
@@ -4000,7 +4079,9 @@
     var v = viewOf(worldW);
     var tb = titleBlock(v.box);
     digFollow(v);
+    var t0 = performance.now();
     digPaint.recolor();
+    digPaintMs = performance.now() - t0;
 
     ctx.clearRect(0, 0, cssW, cssH);
     ctx.fillStyle = PAPER;
@@ -4010,6 +4091,8 @@
     ctx.save();
     clipSheet(v.box);
     drawCutGlobe(v, faceView(v), tb);
+    timeDig("paint", digPaintMs);
+    if (showSimArea) drawSimArea(v);
     drawDigHover(v);
     ctx.restore();
 
@@ -4174,7 +4257,8 @@
       canvas.style.cursor = "ew-resize";
       return;
     }
-    if (pointerOnDebug(p.x, p.y) || hitRect(machinesHit, p.x, p.y) || hitRect(toolModeHit, p.x, p.y) || hitRect(digFarHit, p.x, p.y) || pointerOnTheme(p.x, p.y) ||
+    if (pointerOnDebug(p.x, p.y) || hitRect(machinesHit, p.x, p.y) || hitRect(toolModeHit, p.x, p.y) || hitRect(digFarHit, p.x, p.y) ||
+      hitRect(simAreaHit, p.x, p.y) || pointerOnTheme(p.x, p.y) ||
       hitRect(digUpHit, p.x, p.y) || hitRect(digDownHit, p.x, p.y)) {
       canvas.style.cursor = "pointer";
       return;
@@ -4205,12 +4289,20 @@
       return;
     }
     if (hitRect(toolModeHit, p.x, p.y)) {
-      destroyTool = !destroyTool;
+      var names = DIG.TOOL_NAMES, at = names.indexOf(toolName);
+      var by = hitRect(toolPrevHit, p.x, p.y) ? -1 : 1;
+      toolName = names[(at + by + names.length) % names.length];
+      digReach.key = "";
       event.preventDefault();
       return;
     }
     if (hitRect(digFarHit, p.x, p.y)) {
       digFar = !digFar;
+      event.preventDefault();
+      return;
+    }
+    if (hitRect(simAreaHit, p.x, p.y)) {
+      showSimArea = !showSimArea;
       event.preventDefault();
       return;
     }

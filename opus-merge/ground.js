@@ -83,6 +83,7 @@ function makeColumnWorld(column, pockets) {
       return !!water && y >= water.y0 && y < water.y1 && x >= water.x0 && x < water.x1;
     },
     sky: function (x, y) { return y < 0; },
+    buried: holes.filter(function (h) { return h.name === "gas"; }),
     cell: cell
   };
 }

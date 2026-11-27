@@ -11,12 +11,10 @@ function makeDigPaint(S, colors) {
   "use strict";
 
   var W = S.W, H = S.H, CS = S.CS, CW = S.CW, CH = S.CH;
-  var mat = S.mat, flag = S.flag, body = S.body, shade = S.shade, dirty = S.dirty, edited = S.edited;
+  var mat = S.mat, flag = S.flag, body = S.body, shade = S.shade, base = S.base, dirty = S.dirty, edited = S.edited;
   var AIR = S.AIR, SAND = S.SAND, TOPSOIL = S.TOPSOIL, CLAY = S.CLAY, GRAVEL = S.GRAVEL;
   var STONE = S.STONE, WATER = S.WATER, OIL = S.OIL;
   var LOOSE = S.LOOSE, WET = S.WET, CRACK = S.CRACK;
-  var world = S.world;
-  var gen = { mat: 0, flag: 0, shade: 0, clump: 0 };
 
   var C, P_INK, P_MID, P_FAINT, P_WATER, P_WET, P_PAPER, P_OIL, WATER_RGB;
 
@@ -102,11 +100,10 @@ function makeDigPaint(S, colors) {
     return hatch(m, i, x, y);
   }
 
-  function changed(i, x, y, o) {
+  function changed(i, x, y) {
     if (!edited[((y / CS) | 0) * CW + ((x / CS) | 0)]) return 0;
     var m = mat[i];
-    world.cell(o.x + x, o.y + y, gen);
-    if (m === gen.mat) return 0;
+    if (m === base[i]) return 0;
     if (m === AIR) return P_PAPER;
     if (m === WATER) return waterColor(i);
     if (m === OIL) return P_OIL;
@@ -114,14 +111,14 @@ function makeDigPaint(S, colors) {
   }
 
   function paintRect(x0, y0, x1, y1) {
-    var lp = lines.px, fp = fills.px, op = overlay.px, o = S.origin();
+    var lp = lines.px, fp = fills.px, op = overlay.px;
     for (var y = y0; y <= y1; y++) {
       var row = y * W;
       for (var x = x0; x <= x1; x++) {
         var i = row + x;
         lp[i] = lineColor(i, x, y);
         fp[i] = mat[i] === WATER ? lp[i] : (flag[i] & WET) ? P_WET : 0;
-        op[i] = changed(i, x, y, o);
+        op[i] = changed(i, x, y);
         var s = mat[i] === OIL ? 1 : 0;
         if (s !== oilSeen[i]) { oilSeen[i] = s; oilDirty = true; }
       }
