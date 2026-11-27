@@ -40,7 +40,7 @@ function makeDig(world) {
   /* Per slot: its chunk, its neighbours east, west, up and down (-1 when
      not made), and flags. `halo` says all eight neighbours are made, which
      a chunk needs before anything in it moves. */
-  var chunkX, chunkY, nb, isLive, edited, dirty, halo, active, next, activeBox, nextBox;
+  var chunkX, chunkY, nb, isLive, edited, dirty, halo, slow, active, next, activeBox, nextBox;
   var slots = new Map();
   var activeList = [], nextList = [], dirtyList = [];
   var DX = [1, -1, 0, 0], DY = [0, 0, -1, 1], OPP = [1, 0, 3, 2];
@@ -56,7 +56,7 @@ function makeDig(world) {
   var ticks = 0;
   var collapse = null;
   var taken = new Array(NAMES.length).fill(0);
-  var lastActive = 0;
+  var lastActive = 0, lastCoarse = 0, awakeList = [];
   var editedCount = 0;
   var gen = { mat: 0, flag: 0, shade: 0, clump: 0 };
   var seenMark = 0;
@@ -84,7 +84,7 @@ function makeDig(world) {
     chunkX = more(chunkX, Int32Array, n); chunkY = more(chunkY, Int32Array, n);
     nb = more(nb, Int32Array, n * 4, -1);
     isLive = more(isLive, Uint8Array, n); edited = more(edited, Uint8Array, n);
-    dirty = more(dirty, Uint8Array, n); halo = more(halo, Uint8Array, n);
+    dirty = more(dirty, Uint8Array, n); halo = more(halo, Uint8Array, n); slow = more(slow, Uint8Array, n);
     active = more(active, Uint8Array, n); next = more(next, Uint8Array, n);
     activeBox = more(activeBox, Int8Array, n * 4); nextBox = more(nextBox, Int8Array, n * 4);
     cap = n;
@@ -349,8 +349,29 @@ function makeDig(world) {
   var REST_PACE = 0.5;
   var TOPSOIL_PACE = 0.35;
 
+  /* Ground nobody looks at closely is stepped every COARSE-th substep
+     only. A visit there stands for COARSE substeps: a cell moves at
+     COARSE times its pace, and past every time it moves again on the
+     same visit, so things there move about as far in the same time. */
+  var COARSE = 4;
+  /* 0: every chunk is looked at closely, 1: none is, 2: those in `focus`. */
+  var focusMode = 0, focus = null;
+  var scale = 1, sub = 0;
+
+  function pace(p) { return Math.min(1, p * scale); }
+
+  function paceOf(m) {
+    return m === SAND ? SAND_PACE : m === TOPSOIL ? TOPSOIL_PACE : REST_PACE;
+  }
+
   function waits(m) {
-    return Math.random() > (m === SAND ? SAND_PACE : m === TOPSOIL ? TOPSOIL_PACE : REST_PACE);
+    return Math.random() > pace(paceOf(m));
+  }
+
+  function coarse(s) {
+    if (focusMode !== 2) return focusMode === 1;
+    var cx = chunkX[s], cy = chunkY[s];
+    return cx < focus.cx0 || cx > focus.cx1 || cy < focus.cy0 || cy > focus.cy1;
   }
 
   /* The cell below and to side d that a grain on i can slip into, or -1. */
@@ -379,13 +400,13 @@ function makeDig(world) {
         moveCell(i, to);
         mark(to);
         vacated(i);
-        return;
+        return to;
       }
       if (isFluid(t)) {
         swapCell(i, j);
         mark(j);
         vacated(i);
-        return;
+        return j;
       }
       var left = slipsTo(i, j, -1), right = slipsTo(i, j, 1);
       if (left >= 0 || right >= 0) {
@@ -395,7 +416,7 @@ function makeDig(world) {
         else swapCell(i, k);
         mark(k);
         vacated(i);
-        return;
+        return k;
       }
     }
     var y = yOf(i);
@@ -434,7 +455,7 @@ function makeDig(world) {
       if (mat[j] !== AIR) continue;
       if (yOf(j) < world.table) continue;
       open = true;
-      if (Math.random() < 0.04) {
+      if (Math.random() < 0.04 * scale) {
         mat[j] = WATER;
         flag[j] = 0;
         shade[j] = (Math.random() * 256) | 0;
@@ -448,8 +469,8 @@ function makeDig(world) {
   var PRESS = 60;
 
   function fluid(i, m) {
-    var slow = m === OIL;
-    var wait = Math.random() > (slow ? 0.4 : 1) * REST_PACE;
+    var slow = m === OIL, p = (slow ? 0.4 : 1) * REST_PACE;
+    var wait = Math.random() > pace(p);
     var j = south(i), d, k, c;
     if (j >= 0) {
       var t = mat[j];
@@ -460,7 +481,7 @@ function makeDig(world) {
         else swapCell(i, j);
         mark(to);
         vacated(i);
-        return;
+        return to;
       }
       d = Math.random() < 0.5 ? 1 : -1;
       for (k = 0; k < 2; k++, d = -d) {
@@ -472,7 +493,7 @@ function makeDig(world) {
           moveCell(i, below);
           mark(below);
           vacated(i);
-          return;
+          return below;
         }
       }
     }
@@ -510,36 +531,66 @@ function makeDig(world) {
         moveCell(i, target);
         mark(target);
         vacated(i);
-        return;
+        return target;
       }
     }
+  }
+
+  /* Moves the cell on i if it moves; returns where it went, if it did. */
+  function move(i) {
+    var m = mat[i];
+    if (m === WATER || m === OIL) return fluid(i, m);
+    if (flag[i] & LOOSE) return grain(i);
   }
 
   function cell(i) {
     if (stamp[i] === st) return;
     var m = mat[i];
     if (m === AIR || body[i]) return;
-    if (m === WATER || m === OIL) fluid(i, m);
-    else if (flag[i] & LOOSE) grain(i);
+    var j = move(i);
+    if (scale === 1 || !(j >= 0)) return;
+    var left = (m === OIL ? 0.4 * REST_PACE : m === WATER ? REST_PACE : paceOf(m)) * scale - 1;
+    while (left > 0 && j >= 0 && (left >= 1 || Math.random() < left)) {
+      left -= 1;
+      j = move(j);
+    }
   }
 
   /* Bottom up, a row at a time across the awake chunks of a chunk row,
-     every other row from the right, so piles spread to both sides. */
+     every other row from the right, so piles spread to both sides.
+     Coarse chunks not due this substep wait with their box as it is;
+     they take turns by position so their work is spread over substeps. */
   function stepCells() {
-    var k, s;
+    var k, s, b;
     for (k = 0; k < activeList.length; k++) active[activeList[k]] = 0;
-    var t = activeList;
-    activeList = nextList;
-    nextList = t;
+    var woken = nextList;
+    nextList = activeList;
     nextList.length = 0;
+    activeList = [];
     var tb = activeBox;
     activeBox = nextBox;
     nextBox = tb;
-    for (k = 0; k < activeList.length; k++) {
-      s = activeList[k];
-      active[s] = 1;
+    sub++;
+    awakeList = woken;
+    lastCoarse = 0;
+    for (k = 0; k < woken.length; k++) {
+      s = woken[k];
       next[s] = 0;
+      slow[s] = coarse(s) ? 1 : 0;
+      if (slow[s]) {
+        lastCoarse++;
+        if ((chunkX[s] + chunkY[s] + sub) % COARSE) {
+          next[s] = 1;
+          nextList.push(s);
+          b = s * 4;
+          nextBox[b] = activeBox[b]; nextBox[b + 1] = activeBox[b + 1];
+          nextBox[b + 2] = activeBox[b + 2]; nextBox[b + 3] = activeBox[b + 3];
+          continue;
+        }
+      }
+      active[s] = 1;
       if (!halo[s]) ensureHalo(s);
+      activeList.push(s);
     }
     st = st === 255 ? 1 : st + 1;
     activeList.sort(function (a, b) { return chunkY[b] - chunkY[a] || chunkX[a] - chunkX[b]; });
@@ -556,6 +607,7 @@ function makeDig(world) {
         var rev = ((cy * CS + ly + st) & 1) === 1;
         for (var q = 0; q < g1 - g0; q++) {
           s = activeList[rev ? g1 - 1 - q : g0 + q];
+          scale = slow[s] ? COARSE : 1;
           var bb = s * 4;
           if (ly < activeBox[bb + 1] || ly > activeBox[bb + 3]) continue;
           var row = (s << 10) | (ly << 5), xa = activeBox[bb], xb = activeBox[bb + 2], x;
@@ -565,7 +617,8 @@ function makeDig(world) {
       }
       g0 = g1;
     }
-    lastActive = activeList.length;
+    scale = 1;
+    lastActive = woken.length;
   }
 
   function newBody(m, cells, isAwake) {
@@ -700,8 +753,15 @@ function makeDig(world) {
     for (k = 0; k < list.length; k++) {
       var b = list[k];
       if (!bodies.has(b.id) || !b.awake || !b.cells.length) continue;
-      b.vy = Math.min(b.vy + 0.15, 3);
-      b.carry += b.vy;
+      var n = 1;
+      if (coarse(b.cells[0] >> 10)) {
+        if ((b.id + ticks) % COARSE) { awake.push(b.id); continue; }
+        n = COARSE;
+      }
+      for (var r = 0; r < n; r++) {
+        b.vy = Math.min(b.vy + 0.15, 3);
+        b.carry += b.vy;
+      }
       var steps = b.carry | 0;
       if (!steps) { awake.push(b.id); continue; }
       b.carry -= steps;
@@ -1296,7 +1356,7 @@ function makeDig(world) {
     var awakeCount = 0;
     for (var k = 0; k < awake.length; k++) if (bodies.has(awake[k])) awakeCount++;
     return {
-      active: lastActive, chunks: live, edited: editedCount, awake: awakeCount, clumps: bodies.size,
+      active: lastActive, coarse: lastCoarse, chunks: live, edited: editedCount, awake: awakeCount, clumps: bodies.size,
       calmed: calmed, taken: taken.slice(), ticks: ticks
     };
   }
@@ -1351,11 +1411,18 @@ function makeDig(world) {
       for (var k = 0; k < list.length; k++) dirty[list[k]] = 0;
       return list;
     },
-    /* Chunks scanned in the last substep, as [cx, cy]. */
+    /* Chunks awake in the last substep, as [cx, cy]. */
     awakeChunks: function () {
-      return activeList.map(function (s) { return [chunkX[s], chunkY[s]]; });
+      return awakeList.map(function (s) { return [chunkX[s], chunkY[s]]; });
     },
     pin: pin,
+    /* Sets the world box x0..x1, y0..y1 looked at closely; everything
+       else is stepped coarsely. Null makes all of it coarse. */
+    focus: function (r) {
+      if (!r) { focusMode = 1; return; }
+      focusMode = 2;
+      focus = { cx0: Math.floor(r.x0 / CS), cy0: Math.floor(r.y0 / CS), cx1: Math.floor(r.x1 / CS), cy1: Math.floor(r.y1 / CS) };
+    },
     onReset: function (fn) { resetHooks.push(fn); },
     step: step,
     dig: dig,

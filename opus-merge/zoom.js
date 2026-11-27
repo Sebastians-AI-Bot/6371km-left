@@ -2076,7 +2076,8 @@
       ["fps", fpsLabel],
       ["sim", digTime.sim.toFixed(1) + " ms"],
       ["dig paint", digTime.paint.toFixed(1) + " ms"],
-      ["awake", digStats.active + " of " + digStats.chunks + " chunks, " + digStats.awake + " clumps"]
+      ["awake", digStats.active + " of " + digStats.chunks + " chunks, " + digStats.coarse + " coarse"],
+      ["clumps", digStats.awake + " moving"]
     ];
   }
 
@@ -2093,6 +2094,8 @@
   var digDownHit = null;
   /* Shift turns the wheel at 1×, whatever the slider says. */
   var wheelSpeed = 0.33;
+  /* Views wider than this step all the dig ground coarsely. */
+  var coarseFrom = 20;
 
   /* Log sliders in the debug panel. */
   var SLIDERS = [
@@ -2107,6 +2110,12 @@
       get: function () { return wheelSpeed; },
       set: function (k) { wheelSpeed = k; },
       text: function (k) { return trimNum(k.toFixed(2)) + "\u00d7"; }
+    },
+    {
+      label: "coarse sim wider than", min: 1, max: 1000,
+      get: function () { return coarseFrom; },
+      set: function (w) { coarseFrom = w; },
+      text: function (w) { return formatLength(w); }
     }
   ];
   var sliderHits = [];
@@ -2749,6 +2758,15 @@
     return true;
   }
 
+  /* Ground on screen is stepped closely unless the view is wider than
+     coarseFrom; the rest coarsely. */
+  function digFocus() {
+    var v = viewOf(currentWorldW());
+    if (v.worldW > coarseFrom) { DIG.focus(null); return; }
+    var f = digFace(v), b = v.box, pad = DIG.CS;
+    DIG.focus({ x0: f.cx(b.x) - pad, y0: f.cy(b.y) - pad, x1: f.cx(b.x + b.w) + pad, y1: f.cy(b.y + b.h) + pad });
+  }
+
   function stepDig(now) {
     var dt = simLast ? Math.min(0.1, (now - simLast) / 1000) : 0;
     simAcc += dt;
@@ -2757,6 +2775,7 @@
       FACE_HALF += Math.max(0.002, (faceGoal - FACE_HALF) * (1 - Math.exp(-dt / 0.35)));
       if (FACE_HALF > faceGoal) FACE_HALF = faceGoal;
     }
+    digFocus();
     var n = 0, t0 = performance.now();
     while (simAcc >= 1 / 60 && n < 3 && performance.now() - t0 < SIM_BUDGET) {
       DIG.step();
