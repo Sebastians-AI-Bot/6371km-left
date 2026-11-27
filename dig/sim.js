@@ -41,6 +41,7 @@ function makeDig(world) {
      not made), and flags. `halo` says all eight neighbours are made, which
      a chunk needs before anything in it moves. */
   var chunkX, chunkY, nb, isLive, edited, dirty, halo, slow, active, next, activeBox, nextBox;
+  var activeLo, activeHi, nextLo, nextHi;
   var slots = new Map();
   var activeList = [], nextList = [], dirtyList = [];
   var DX = [1, -1, 0, 0], DY = [0, 0, -1, 1], OPP = [1, 0, 3, 2];
@@ -88,6 +89,8 @@ function makeDig(world) {
     dirty = more(dirty, Uint8Array, n); halo = more(halo, Uint8Array, n); slow = more(slow, Uint8Array, n);
     active = more(active, Uint8Array, n); next = more(next, Uint8Array, n);
     activeBox = more(activeBox, Int8Array, n * 4); nextBox = more(nextBox, Int8Array, n * 4);
+    activeLo = more(activeLo, Int8Array, n * CS); activeHi = more(activeHi, Int8Array, n * CS);
+    nextLo = more(nextLo, Int8Array, n * CS); nextHi = more(nextHi, Int8Array, n * CS);
     cap = n;
   }
 
@@ -207,19 +210,34 @@ function makeDig(world) {
   }
 
   /* Wakes cells x0..x1, y0..y1 of chunk s (chunk-local) for the next
-     substep. Each awake chunk scans only the box of cells woken in it. */
+     substep. Each awake chunk keeps the box of rows woken in it and, for
+     every row in the box, the span of cells woken there (empty when
+     lo > hi); it scans only those spans. */
   function touch(s, x0, y0, x1, y1) {
-    var k = s * 4;
+    var k = s * 4, r = s * CS, y;
     if (!next[s]) {
       next[s] = 1;
       nextList.push(s);
       nextBox[k] = x0; nextBox[k + 1] = y0; nextBox[k + 2] = x1; nextBox[k + 3] = y1;
+      for (y = y0; y <= y1; y++) { nextLo[r + y] = x0; nextHi[r + y] = x1; }
       return;
     }
+    var by0 = nextBox[k + 1], by1 = nextBox[k + 3];
+    if (y0 < by0) {
+      for (y = y1 + 1; y < by0; y++) { nextLo[r + y] = CS; nextHi[r + y] = -1; }
+      nextBox[k + 1] = y0;
+    }
+    if (y1 > by1) {
+      for (y = by1 + 1; y < y0; y++) { nextLo[r + y] = CS; nextHi[r + y] = -1; }
+      nextBox[k + 3] = y1;
+    }
+    for (y = y0; y <= y1; y++) {
+      if (y < by0 || y > by1) { nextLo[r + y] = x0; nextHi[r + y] = x1; continue; }
+      if (x0 < nextLo[r + y]) nextLo[r + y] = x0;
+      if (x1 > nextHi[r + y]) nextHi[r + y] = x1;
+    }
     if (x0 < nextBox[k]) nextBox[k] = x0;
-    if (y0 < nextBox[k + 1]) nextBox[k + 1] = y0;
     if (x1 > nextBox[k + 2]) nextBox[k + 2] = x1;
-    if (y1 > nextBox[k + 3]) nextBox[k + 3] = y1;
   }
 
   /* A cell changed: it and its eight neighbours get another look. */
@@ -630,6 +648,8 @@ function makeDig(world) {
     var tb = activeBox;
     activeBox = nextBox;
     nextBox = tb;
+    tb = activeLo; activeLo = nextLo; nextLo = tb;
+    tb = activeHi; activeHi = nextHi; nextHi = tb;
     sub++;
     awakeList = woken;
     lastCoarse = 0;
@@ -645,6 +665,9 @@ function makeDig(world) {
           b = s * 4;
           nextBox[b] = activeBox[b]; nextBox[b + 1] = activeBox[b + 1];
           nextBox[b + 2] = activeBox[b + 2]; nextBox[b + 3] = activeBox[b + 3];
+          var r0 = s * CS + activeBox[b + 1], r1 = s * CS + activeBox[b + 3] + 1;
+          nextLo.set(activeLo.subarray(r0, r1), r0);
+          nextHi.set(activeHi.subarray(r0, r1), r0);
           continue;
         }
       }
@@ -670,7 +693,9 @@ function makeDig(world) {
           scale = slow[s] ? COARSE : 1;
           var bb = s * 4;
           if (ly < activeBox[bb + 1] || ly > activeBox[bb + 3]) continue;
-          var row = (s << 10) | (ly << 5), xa = activeBox[bb], xb = activeBox[bb + 2], x, i, m;
+          var xa = activeLo[s * CS + ly], xb = activeHi[s * CS + ly];
+          if (xb < xa) continue;
+          var row = (s << 10) | (ly << 5), x, i, m;
           nScanned += xb - xa + 1;
           /* Only fluids and loose cells move; the rest are passed here. */
           if (rev) {
