@@ -36,7 +36,7 @@ function makeDig(world) {
   /* Cells, chunk by chunk: cell i is in slot i >> 10, at column i & 31
      and row (i >> 5) & 31 of its chunk. */
   var cap = 0, used = 0, live = 0, freeSlots = [];
-  var mat, flag, dmg, shade, stamp, base, seen, body;
+  var mat, flag, dmg, shade, stamp, base, seen, body, blocked;
   /* Per slot: its chunk, its neighbours east, west, up and down (-1 when
      not made), and flags. `halo` says all eight neighbours are made, which
      a chunk needs before anything in it moves. */
@@ -79,8 +79,9 @@ function makeDig(world) {
     var n = cap ? cap * 2 : 512;
     mat = more(mat, Uint8Array, n * CB); flag = more(flag, Uint8Array, n * CB);
     dmg = more(dmg, Uint8Array, n * CB); shade = more(shade, Uint8Array, n * CB);
-    stamp = more(stamp, Uint8Array, n * CB); base = more(base, Uint8Array, n * CB);
+    stamp = more(stamp, Uint16Array, n * CB); base = more(base, Uint8Array, n * CB);
     seen = more(seen, Uint16Array, n * CB); body = more(body, Int32Array, n * CB);
+    blocked = more(blocked, Uint16Array, n * CB);
     chunkX = more(chunkX, Int32Array, n); chunkY = more(chunkY, Int32Array, n);
     nb = more(nb, Int32Array, n * 4, -1);
     isLive = more(isLive, Uint8Array, n); edited = more(edited, Uint8Array, n);
@@ -130,7 +131,7 @@ function makeDig(world) {
           world.cell(wx, wy, gen);
           mat[g] = base[g] = gen.mat; flag[g] = gen.flag; shade[g] = gen.shade; body[g] = gen.clump;
         }
-        dmg[g] = 0; stamp[g] = 0; seen[g] = 0;
+        dmg[g] = 0; stamp[g] = 0; seen[g] = 0; blocked[g] = 0;
       }
     }
     for (var d = 0; d < 4; d++) {
@@ -245,6 +246,16 @@ function makeDig(world) {
       if (lx === 0 && nb[d * 4 + 1] >= 0) touch(nb[d * 4 + 1], 31, 0, 31, 0);
       if (lx === 31 && nb[d * 4] >= 0) touch(nb[d * 4], 0, 0, 0, 0);
     }
+  }
+
+  /* A cell that waits gets another look; nothing around it changed. Its
+     stamp is cleared, as one left from long ago could match a later
+     substep and skip it there. */
+  function wake(i) {
+    var s = i >> 10, lx = i & 31, ly = (i >> 5) & 31;
+    stamp[i] = 0;
+    if (!halo[s]) ensureHalo(s);
+    touch(s, lx, ly, lx, ly);
   }
 
   /* Marks every cell of the world box x0..x1, y0..y1. */
@@ -387,7 +398,7 @@ function makeDig(world) {
     var j = south(i);
     if (j >= 0) {
       var t = mat[j];
-      if ((t === AIR || isFluid(t)) && waits(m)) { mark(i); return; }
+      if ((t === AIR || isFluid(t)) && waits(m)) { wake(i); return; }
       if (t === AIR) {
         var to = sand ? j : fallTo(j);
         /* A falling grain drifts a cell sideways now and then, so a stream
@@ -410,7 +421,7 @@ function makeDig(world) {
       }
       var left = slipsTo(i, j, -1), right = slipsTo(i, j, 1);
       if (left >= 0 || right >= 0) {
-        if (waits(m)) { mark(i); return; }
+        if (waits(m)) { wake(i); return; }
         var k = left >= 0 && right >= 0 ? (Math.random() < 0.5 ? right : left) : left >= 0 ? left : right;
         if (mat[k] === AIR) moveCell(i, k);
         else swapCell(i, k);
@@ -463,7 +474,7 @@ function makeDig(world) {
         mark(j);
       }
     }
-    if (open) mark(i);
+    if (open) wake(i);
   }
 
   var PRESS = 60;
@@ -475,7 +486,7 @@ function makeDig(world) {
     if (j >= 0) {
       var t = mat[j];
       if (t === AIR || (m === WATER && t === OIL)) {
-        if (wait) { mark(i); return; }
+        if (wait) { wake(i); return; }
         var to = j;
         if (t === AIR) moveCell(i, to = fallTo(j));
         else swapCell(i, j);
@@ -489,7 +500,7 @@ function makeDig(world) {
         if (c < 0 || mat[c] !== AIR) continue;
         var below = side(j, d);
         if (below >= 0 && mat[below] === AIR) {
-          if (wait) { mark(i); return; }
+          if (wait) { wake(i); return; }
           moveCell(i, below);
           mark(below);
           vacated(i);
@@ -515,19 +526,35 @@ function makeDig(world) {
         if (b >= 0 && mat[b] === AIR) { drop = true; break; }
       }
       /* Under a head the cell passes through its own fluid to the nearest
-         open cell on its row, so a pool levels out across its width. */
+         open cell on its row, so a pool levels out across its width. Air
+         with fluid over it is a gap in the pool, filled from above. */
       if (target < 0 && pushed) {
+        var bit = dir > 0 ? 1 : 2, tag = (sub & 0x3fff) << 2, shut = false;
         c = i;
         for (r = 1; r <= PRESS; r++) {
           c = side(c, dir);
-          if (c < 0) break;
-          if (mat[c] === m) continue;
-          if (mat[c] === AIR) target = c;
+          if (c < 0) { shut = true; break; }
+          if (mat[c] === m) {
+            if ((blocked[c] & ~3) === tag && (blocked[c] & bit)) { shut = true; break; }
+            continue;
+          }
+          if (mat[c] === AIR) {
+            var over = north(c);
+            if (over < 0 || !isFluid(mat[over])) target = c;
+          }
+          shut = target < 0;
           break;
+        }
+        /* Every cell on the way would find its row shut the same way, so
+           this substep they need not look again. */
+        if (shut) {
+          for (var q = i; q !== c; q = side(q, dir)) {
+            blocked[q] = (blocked[q] & ~3) === tag ? blocked[q] | bit : tag | bit;
+          }
         }
       }
       if (target >= 0 && (drop || pushed)) {
-        if (wait) { mark(i); return; }
+        if (wait) { wake(i); return; }
         moveCell(i, target);
         mark(target);
         vacated(i);
@@ -592,7 +619,7 @@ function makeDig(world) {
       if (!halo[s]) ensureHalo(s);
       activeList.push(s);
     }
-    st = st === 255 ? 1 : st + 1;
+    st = st === 65535 ? 1 : st + 1;
     activeList.sort(function (a, b) { return chunkY[b] - chunkY[a] || chunkX[a] - chunkX[b]; });
     var g0 = 0;
     while (g0 < activeList.length) {
