@@ -678,7 +678,7 @@ function makeDig(world) {
 
   function newBody(m, cells, isAwake) {
     var id = nextId++;
-    var b = { id: id, mat: m, cells: cells, awake: false, vy: 0, carry: 0, flat: 0 };
+    var b = { id: id, mat: m, cells: cells, awake: false, vy: 0, carry: 0, flat: 0, low: null, slow: false };
     bodies.set(id, b);
     for (var k = 0; k < cells.length; k++) {
       var i = cells[k];
@@ -693,14 +693,17 @@ function makeDig(world) {
   var tmpF = new Uint8Array(1024), tmpS = new Uint8Array(1024), tmpD = new Uint8Array(1024);
   var tmpTo = new Int32Array(1024);
 
+  function roomFor(n) {
+    if (tmpTo.length >= n) return;
+    tmpTo = new Int32Array(n * 2);
+    tmpF = new Uint8Array(n * 2);
+    tmpS = new Uint8Array(n * 2);
+    tmpD = new Uint8Array(n * 2);
+  }
+
   function tryMove(b, dx, dy) {
     var c = b.cells, n = c.length, id = b.id, k, i, j;
-    if (tmpTo.length < n) {
-      tmpTo = new Int32Array(n * 2);
-      tmpF = new Uint8Array(n * 2);
-      tmpS = new Uint8Array(n * 2);
-      tmpD = new Uint8Array(n * 2);
-    }
+    roomFor(n);
     for (k = 0; k < n; k++) {
       i = c[k];
       j = dy ? south(i) : i;
@@ -710,6 +713,38 @@ function makeDig(world) {
       if (body[j] === id) continue;
       if (!freeFor(mat[j])) return false;
     }
+    place(b, dy);
+    return true;
+  }
+
+  /* Drops a clump up to `most` cells straight down in one move, as far as
+     every cell of it has room; returns how far it went. */
+  function fall(b, most) {
+    var c = b.cells, n = c.length, id = b.id, k, d, j;
+    for (k = 0; k < n && most > 0; k++) {
+      j = south(c[k]);
+      if (j >= 0 && body[j] === id) continue;
+      for (d = 0; d < most; d++) {
+        if (j < 0 || (body[j] !== id && !freeFor(mat[j]))) break;
+        j = south(j);
+      }
+      most = d;
+    }
+    if (most <= 0) return 0;
+    roomFor(n);
+    for (k = 0; k < n; k++) {
+      j = c[k];
+      for (d = 0; d < most; d++) j = south(j);
+      tmpTo[k] = j;
+    }
+    place(b, most);
+    return most;
+  }
+
+  /* Moves a clump's cells to tmpTo. Fluid in the way takes the cells it
+     left. */
+  function place(b, dy) {
+    var c = b.cells, n = c.length, id = b.id, k, i, j;
     var fluids = [];
     for (k = 0; k < n; k++) {
       i = c[k];
@@ -726,7 +761,6 @@ function makeDig(world) {
       dmg[i] = 0;
       body[i] = 0;
     }
-    var moved = new Array(n);
     for (k = 0; k < n; k++) {
       j = tmpTo[k];
       mat[j] = b.mat;
@@ -734,11 +768,11 @@ function makeDig(world) {
       shade[j] = tmpS[k];
       dmg[j] = tmpD[k];
       body[j] = id;
-      moved[k] = j;
+      mark(j);
     }
-    for (k = 0; k < n; k++) mark(moved[k]);
     for (k = 0; k < n; k++) {
       i = c[k];
+      c[k] = tmpTo[k];
       if (body[i] === id) continue;
       if (fluids.length) {
         mat[i] = fluids.pop();
@@ -747,8 +781,7 @@ function makeDig(world) {
       }
       vacated(i);
     }
-    b.cells = moved;
-    return true;
+    if (b.low !== null) b.low += dy;
   }
 
   /* A clump that cannot rotate still has to leave a face steeper than
@@ -795,24 +828,21 @@ function makeDig(world) {
   }
 
   function stepBodies() {
-    var list = [];
+    var list = [], wait = [];
     for (var k = 0; k < awake.length; k++) {
       var a = bodies.get(awake[k]);
-      if (a && a.awake && a.cells.length) {
-        a.low = lowest(a);
-        list.push(a);
-      }
+      if (!a || !a.awake || !a.cells.length) continue;
+      a.slow = coarse(a.cells[0] >> 10);
+      if (a.slow && (a.id + ticks) % COARSE) { wait.push(a.id); continue; }
+      if (a.low === null) a.low = lowest(a);
+      list.push(a);
     }
-    awake = [];
+    awake = wait;
     list.sort(function (p, q) { return q.low - p.low; });
     for (k = 0; k < list.length; k++) {
       var b = list[k];
       if (!bodies.has(b.id) || !b.awake || !b.cells.length) continue;
-      var n = 1;
-      if (coarse(b.cells[0] >> 10)) {
-        if ((b.id + ticks) % COARSE) { awake.push(b.id); continue; }
-        n = COARSE;
-      }
+      var n = b.slow ? COARSE : 1;
       for (var r = 0; r < n; r++) {
         b.vy = Math.min(b.vy + 0.15, 3);
         b.carry += b.vy;
@@ -820,11 +850,7 @@ function makeDig(world) {
       var steps = b.carry | 0;
       if (!steps) { awake.push(b.id); continue; }
       b.carry -= steps;
-      var moved = false;
-      for (var s = 0; s < steps; s++) {
-        if (tryMove(b, 0, 1)) moved = true;
-        else break;
-      }
+      var moved = fall(b, steps) > 0;
       if (moved) b.flat = 0;
       else {
         if (b.cells.length <= 900) {
@@ -1261,6 +1287,7 @@ function makeDig(world) {
         }
         if (!keep.length) { bodies.delete(b.id); continue; }
         b.cells = keep;
+        b.low = null;
         wakeBody(b.id);
       }
     }
@@ -1337,10 +1364,11 @@ function makeDig(world) {
       if (!id) continue;
       var b = bodies.get(id);
       if (!b) {
-        b = { id: id, mat: mat[g + k], cells: [], awake: false, vy: 0, carry: 0, flat: 0 };
+        b = { id: id, mat: mat[g + k], cells: [], awake: false, vy: 0, carry: 0, flat: 0, low: null, slow: false };
         bodies.set(id, b);
       }
       b.cells.push(g + k);
+      b.low = null;
     }
   }
 
@@ -1379,6 +1407,7 @@ function makeDig(world) {
       var b = bodies.get(id);
       if (!b) return;
       b.cells = b.cells.filter(function (c) { return c >> 10 !== s; });
+      b.low = null;
       if (!b.cells.length) bodies.delete(id);
     });
     var cx = chunkX[s], cy = chunkY[s];

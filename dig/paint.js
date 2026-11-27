@@ -8,7 +8,8 @@
    it. The overlay holds only what digging changed against the untouched
    ground: holes in paper, water and oil in their colours, moved ground
    faint. It is for views too far out for the cells themselves. Changed
-   chunks outside the window are drawn on it as small canvases. */
+   chunks outside the window are drawn on it from sheets, canvases of
+   8 × 8 chunks each. */
 function makeDigPaint(S, colors, view) {
   "use strict";
 
@@ -43,8 +44,11 @@ function makeDigPaint(S, colors, view) {
     P_WATER = packHex(c.waterInk); P_WET = packHex(c.wet);
     P_PAPER = packHex(c.paper); P_OIL = packHex(c.oil);
     WATER_RGB = rgb(c.water);
+    catchUp();
     dirty.fill(1);
-    archive.forEach(function (a) { a.stale = true; });
+    sheets.forEach(function (sh) {
+      for (var k = 0; k < SHEET * SHEET; k++) if (sh.has[k]) stale(sh.sx * SHEET + k % SHEET, sh.sy * SHEET + ((k / SHEET) | 0));
+    });
   }
 
   function layer() {
@@ -58,7 +62,14 @@ function makeDigPaint(S, colors, view) {
   var lines = layer();
   var fills = layer();
   var overlay = layer();
-  var archive = new Map();
+  var SHEET = 8, SP = SHEET * CS, SHEET_BIAS = 1 << 22;
+  var sheets = new Map(), queue = [];
+  /* Chunks redrawn on the sheets per frame, oldest change first; the rest
+     wait for later frames. */
+  var TILES_PER_FRAME = 192;
+  /* Far out only the overlay shows: window chunks that change go on the
+     sheets like the rest and are copied in once the cells show again. */
+  var far = false, behind = new Uint8Array(CW * CH);
   setColors(colors);
 
   function differs(i, j) {
@@ -147,6 +158,7 @@ function makeDigPaint(S, colors, view) {
     var w = Math.min(CS, W - lx * CS), h = Math.min(CS, H - ly * CS);
     var j = ly * CS * W + lx * CS;
     dirty[c] = 1;
+    behind[c] = 0;
     if (sl < 0) {
       for (var r = 0; r < h; r++, j += W) {
         mat.fill(STONE, j, j + w); base.fill(STONE, j, j + w);
@@ -169,14 +181,41 @@ function makeDigPaint(S, colors, view) {
     S.pin(ox / CS, oy / CS, ox / CS + CW - 1, oy / CS + CH - 1);
   }
 
-  function recolor() {
+  /* Window chunk (lx, ly) moves to its sheet: its overlay pixels are
+     cleared and it is drawn there now, so it does not blink. */
+  function hide(lx, ly) {
+    var c = ly * CW + lx, cx = ox / CS + lx, cy = oy / CS + ly;
+    if (behind[c]) { stale(cx, cy); return; }
+    behind[c] = 1;
+    var w = Math.min(CS, W - lx * CS), h = Math.min(CS, H - ly * CS), j = ly * CS * W + lx * CS;
+    for (var r = 0; r < h; r++, j += W) overlay.px.fill(0, j, j + w);
+    overlay.ctx.putImageData(overlay.img, 0, 0, lx * CS, ly * CS, w, h);
+    tile(cx, cy, false);
+  }
+
+  function catchUp() {
+    for (var c = 0; c < CW * CH; c++) {
+      if (!behind[c]) continue;
+      var lx = c % CW, ly = (c / CW) | 0;
+      pull(lx, ly);
+      tile(ox / CS + lx, oy / CS + ly, true);
+    }
+  }
+
+  /* `isFar`: only the overlay is drawn (see drawOverlay). */
+  function recolor(isFar) {
+    isFar = !!isFar;
+    if (far && !isFar) catchUp();
+    far = isFar;
     var list = S.takeDirty(), k;
     for (k = 0; k < list.length; k++) {
       var sl = list[k];
       if (!S.isLive(sl)) continue;
       var c = S.chunkOf(sl), lx = c.cx - ox / CS, ly = c.cy - oy / CS;
-      if (lx >= 0 && ly >= 0 && lx < CW && ly < CH) pull(lx, ly);
-      else if (S.isEdited(sl)) stale(c.cx, c.cy);
+      if (lx >= 0 && ly >= 0 && lx < CW && ly < CH) {
+        if (!far) pull(lx, ly);
+        else if (S.isEdited(sl)) hide(lx, ly);
+      } else if (S.isEdited(sl)) stale(c.cx, c.cy);
     }
     for (var cy = 0; cy < CH; cy++) {
       var cx = 0;
@@ -388,44 +427,97 @@ function makeDigPaint(S, colors, view) {
     else blit(ctx, lines, v);
   }
 
-  /* A changed chunk outside the window, drawn again from the world the
-     next time the overlay is drawn after it changed. */
-  function stale(cx, cy) {
-    var k = cx + "," + cy, a = archive.get(k);
-    if (a) a.stale = true;
-    else archive.set(k, { cx: cx, cy: cy, cv: null, stale: true });
+  function sheetOf(cx, cy, make) {
+    var sx = Math.floor(cx / SHEET), sy = Math.floor(cy / SHEET);
+    var key = (sx + SHEET_BIAS) * SHEET_BIAS * 4 + sy + SHEET_BIAS, sh = sheets.get(key);
+    if (!sh && make) {
+      sh = { sx: sx, sy: sy, cv: null, img: null, px: null, has: new Uint8Array(SHEET * SHEET),
+        wait: new Uint8Array(SHEET * SHEET), shown: 0, x0: SP, y0: SP, x1: -1, y1: -1 };
+      sheets.set(key, sh);
+    }
+    return sh;
   }
 
-  var tileImg = null, lastTiles = 0;
+  /* A changed chunk outside the window, queued to be drawn again on its
+     sheet from the world. */
+  function stale(cx, cy) {
+    var sh = sheetOf(cx, cy, true), k = (cy - sh.sy * SHEET) * SHEET + cx - sh.sx * SHEET;
+    if (sh.wait[k]) return;
+    sh.wait[k] = 1;
+    queue.push(cx, cy);
+  }
 
-  function tile(a) {
-    a.stale = false;
-    var sl = S.slotAt(a.cx, a.cy);
-    if (sl < 0) { a.cv = null; return; }
-    if (!tileImg) tileImg = new ImageData(CS, CS);
-    var px = new Uint32Array(tileImg.data.buffer), sm = S.mat, sb = S.base, ss = S.shade, any = false;
-    for (var k = 0, i = sl << 10; k < CB; k++, i++) {
-      var m = sm[i], v = 0;
-      if (m !== sb[i]) v = m === AIR ? P_PAPER : m === WATER ? waterTint(ss[i]) : m === OIL ? P_OIL : P_FAINT;
-      px[k] = v;
-      if (v) any = true;
+  /* Chunk (cx, cy) drawn on its sheet from the world, or cleared when the
+     window shows it or the world no longer holds it. */
+  function tile(cx, cy, clear) {
+    var sh = sheetOf(cx, cy, !clear);
+    if (!sh) return;
+    var lx = cx - sh.sx * SHEET, ly = cy - sh.sy * SHEET, k = ly * SHEET + lx;
+    sh.wait[k] = 0;
+    var sl = clear ? -1 : S.slotAt(cx, cy);
+    if (sl < 0 && !sh.has[k]) return;
+    if (!sh.img) {
+      sh.img = new ImageData(SP, SP);
+      sh.px = new Uint32Array(sh.img.data.buffer);
     }
-    if (!any) { a.cv = null; return; }
-    if (!a.cv) {
-      a.cv = document.createElement("canvas");
-      a.cv.width = CS;
-      a.cv.height = CS;
+    var px = sh.px, sm = S.mat, sb = S.base, ss = S.shade, any = false;
+    var j0 = ly * CS * SP + lx * CS;
+    if (sl < 0) {
+      for (var r = 0; r < CS; r++) px.fill(0, j0 + r * SP, j0 + r * SP + CS);
+    } else {
+      for (var y = 0, i = sl << 10; y < CS; y++) {
+        for (var x = 0, j = j0 + y * SP; x < CS; x++, i++, j++) {
+          var m = sm[i], v = 0;
+          if (m !== sb[i]) { v = m === AIR ? P_PAPER : m === WATER ? waterTint(ss[i]) : m === OIL ? P_OIL : P_FAINT; any = true; }
+          px[j] = v;
+        }
+      }
     }
-    a.cv.getContext("2d").putImageData(tileImg, 0, 0);
+    if (any !== !!sh.has[k]) { sh.has[k] = any ? 1 : 0; sh.shown += any ? 1 : -1; }
+    var x0 = lx * CS, y0 = ly * CS;
+    if (x0 < sh.x0) sh.x0 = x0;
+    if (y0 < sh.y0) sh.y0 = y0;
+    if (x0 + CS > sh.x1) sh.x1 = x0 + CS;
+    if (y0 + CS > sh.y1) sh.y1 = y0 + CS;
+  }
+
+  function flushSheets() {
+    var n = Math.min(queue.length, TILES_PER_FRAME * 2), k;
+    for (k = 0; k < n; k += 2) {
+      var lx = queue[k] - ox / CS, ly = queue[k + 1] - oy / CS;
+      tile(queue[k], queue[k + 1], !far && lx >= 0 && ly >= 0 && lx < CW && ly < CH);
+    }
+    queue.splice(0, n);
+    sheets.forEach(function (sh, key) {
+      if (sh.x1 < 0) return;
+      if (!sh.shown) {
+        sheets.delete(key);
+        return;
+      }
+      if (!sh.cv) {
+        sh.cv = document.createElement("canvas");
+        sh.cv.width = SP;
+        sh.cv.height = SP;
+      }
+      sh.cv.getContext("2d").putImageData(sh.img, 0, 0, sh.x0, sh.y0, sh.x1 - sh.x0, sh.y1 - sh.y0);
+      sh.x0 = sh.y0 = SP;
+      sh.x1 = sh.y1 = -1;
+    });
   }
 
   function drawOverlay(ctx) {
-    var v = viewOf(ctx), now = performance.now(), fresh = now - lastTiles > 200;
-    if (fresh) lastTiles = now;
+    var v = viewOf(ctx);
     blit(ctx, overlay, v);
-    archive.forEach(function (a) {
-      if (a.stale && fresh) tile(a);
-      if (a.cv) ctx.drawImage(a.cv, a.cx * CS - ox, a.cy * CS - oy);
+    flushSheets();
+    var inv = ctx.getTransform().inverse(), cw = ctx.canvas.width, ch = ctx.canvas.height;
+    var a = inv.transformPoint({ x: 0, y: 0 }), b = inv.transformPoint({ x: cw, y: ch });
+    var vx0 = Math.min(a.x, b.x) + ox, vx1 = Math.max(a.x, b.x) + ox;
+    var vy0 = Math.min(a.y, b.y) + oy, vy1 = Math.max(a.y, b.y) + oy;
+    sheets.forEach(function (sh) {
+      if (!sh.cv || !sh.shown) return;
+      var x = sh.sx * SP, y = sh.sy * SP;
+      if (x > vx1 || y > vy1 || x + SP < vx0 || y + SP < vy0) return;
+      ctx.drawImage(sh.cv, x - ox, y - oy);
     });
   }
 
@@ -453,13 +545,17 @@ function makeDigPaint(S, colors, view) {
     oy += scy * CS;
     ccx += scx;
     ccy += scy;
-    archive.forEach(function (a, key) {
-      if (a.cx >= ccx && a.cx < ccx + CW && a.cy >= ccy && a.cy < ccy + CH) archive.delete(key);
-    });
+    for (cy = 0; cy < CH; cy++) {
+      for (cx = 0; cx < CW; cx++) {
+        var ox0 = cx + scx, oy0 = cy + scy;
+        if (ox0 < 0 || oy0 < 0 || ox0 >= CW || oy0 >= CH) tile(ccx + cx, ccy + cy, true);
+      }
+    }
     var sx = scx * CS, sy = scy * CS;
     [mat, flag, shade, base, body, oilSeen].forEach(function (a) { shiftPx(a, W, H, sx, sy); });
     shiftPx(edited, CW, CH, scx, scy);
     shiftPx(dirty, CW, CH, scx, scy);
+    shiftPx(behind, CW, CH, scx, scy);
     [lines, fills, overlay].forEach(function (l) {
       shiftPx(l.px, W, H, sx, sy);
       l.ctx.putImageData(l.img, 0, 0);
@@ -486,7 +582,8 @@ function makeDigPaint(S, colors, view) {
   }
 
   S.onReset(function () {
-    archive.clear();
+    sheets.clear();
+    queue = [];
     pullAll();
   });
   pullAll();

@@ -4088,7 +4088,7 @@
     var tb = titleBlock(v.box);
     digFollow(v);
     var t0 = performance.now();
-    digPaint.recolor();
+    digPaint.recolor(digLook(v.px) === 0);
     digPaintMs = performance.now() - t0;
 
     ctx.clearRect(0, 0, cssW, cssH);
@@ -4411,6 +4411,9 @@
     },
     fps: function () {
       return fpsLabel;
+    },
+    cost: function () {
+      return cost.shown;
     },
     frameStats: function () {
       return { label: fpsLabel, fps: fpsValue, frames: fpsFrames, ms: fpsElapsed, pubs: fpsPubs };
