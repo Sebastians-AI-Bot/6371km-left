@@ -54,7 +54,7 @@ function makeDig(world) {
 
   var st = 1;
   var ticks = 0;
-  var collapse = null;
+  var collapse = new Map();
   var taken = new Array(NAMES.length).fill(0);
   var lastActive = 0, lastCoarse = 0, awakeList = [];
   var editedCount = 0;
@@ -274,13 +274,19 @@ function makeDig(world) {
     }
   }
 
+  /* Ground that lost what held it, gathered per tile and settled a few
+     tiles a step, so a wide cave-in is never one huge box. */
+  var COLLAPSE_TILE = 128, SETTLE_BUDGET = 2;
+  var settling = [];
+
   function growCollapse(x, y) {
-    if (!collapse) collapse = { x0: x, y0: y, x1: x, y1: y };
+    var k = chunkKey(Math.floor(x / COLLAPSE_TILE), Math.floor(y / COLLAPSE_TILE)), c = collapse.get(k);
+    if (!c) collapse.set(k, { x0: x, y0: y, x1: x, y1: y });
     else {
-      if (x < collapse.x0) collapse.x0 = x;
-      if (x > collapse.x1) collapse.x1 = x;
-      if (y < collapse.y0) collapse.y0 = y;
-      if (y > collapse.y1) collapse.y1 = y;
+      if (x < c.x0) c.x0 = x;
+      if (x > c.x1) c.x1 = x;
+      if (y < c.y0) c.y0 = y;
+      if (y > c.y1) c.y1 = y;
     }
   }
 
@@ -664,10 +670,20 @@ function makeDig(world) {
           scale = slow[s] ? COARSE : 1;
           var bb = s * 4;
           if (ly < activeBox[bb + 1] || ly > activeBox[bb + 3]) continue;
-          var row = (s << 10) | (ly << 5), xa = activeBox[bb], xb = activeBox[bb + 2], x;
+          var row = (s << 10) | (ly << 5), xa = activeBox[bb], xb = activeBox[bb + 2], x, i, m;
           nScanned += xb - xa + 1;
-          if (rev) for (x = xb; x >= xa; x--) cell(row | x);
-          else for (x = xa; x <= xb; x++) cell(row | x);
+          /* Only fluids and loose cells move; the rest are passed here. */
+          if (rev) {
+            for (x = xb; x >= xa; x--) {
+              i = row | x; m = mat[i];
+              if (m >= WATER || (m !== AIR && (flag[i] & LOOSE))) cell(i);
+            }
+          } else {
+            for (x = xa; x <= xb; x++) {
+              i = row | x; m = mat[i];
+              if (m >= WATER || (m !== AIR && (flag[i] & LOOSE))) cell(i);
+            }
+          }
         }
       }
       g0 = g1;
@@ -1349,12 +1365,19 @@ function makeDig(world) {
     stepCells();
     cost.clumps += t1 - t0;
     cost.cells += performance.now() - t1;
-    if (collapse && ticks % 12 === 0) {
-      var c = collapse;
-      collapse = null;
-      settleAround(c.x0, c.y0, c.x1, c.y1);
+    if (ticks % 12 === 0 && collapse.size) {
+      collapse.forEach(function (c) { settling.push(c); });
+      collapse.clear();
     }
-    if (ticks % 240 === 0 && live > MAX_CHUNKS) trim();
+    if (settling.length) {
+      var t2 = performance.now(), n = 0;
+      do {
+        var c = settling[n++];
+        settleAround(c.x0, c.y0, c.x1, c.y1);
+      } while (n < settling.length && performance.now() - t2 < SETTLE_BUDGET);
+      settling.splice(0, n);
+    }
+    if (dropQueue.length || (ticks % 240 === 0 && live > MAX_CHUNKS)) trim();
   }
 
   function addBodyCells(s) {
@@ -1381,35 +1404,56 @@ function makeDig(world) {
     return edited[s] || active[s] || next[s];
   }
 
-  /* Drops chunks nothing changed, nobody looks at and nothing next to
-     them changed. */
-  function trim() {
-    var drop = [];
-    slots.forEach(function (s) {
-      if (busy(s)) return;
-      var cx = chunkX[s], cy = chunkY[s];
-      if (pinned && cx >= pinned.cx0 && cx <= pinned.cx1 && cy >= pinned.cy0 && cy <= pinned.cy1) return;
-      for (var dy = -1; dy <= 1; dy++) {
-        for (var dx = -1; dx <= 1; dx++) {
-          var n = slotAt(cx + dx, cy + dy);
-          if (n >= 0 && busy(n)) return;
-        }
+  /* A chunk nothing changed, nobody looks at and nothing next to it
+     changed. */
+  function droppable(s) {
+    if (!isLive[s] || busy(s)) return false;
+    var cx = chunkX[s], cy = chunkY[s];
+    if (pinned && cx >= pinned.cx0 && cx <= pinned.cx1 && cy >= pinned.cy0 && cy <= pinned.cy1) return false;
+    for (var dy = -1; dy <= 1; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        var n = slotAt(cx + dx, cy + dy);
+        if (n >= 0 && busy(n)) return false;
       }
-      drop.push(s);
-    });
-    for (var k = 0; k < drop.length; k++) evict(drop[k]);
+    }
+    return true;
   }
 
+  /* Droppable chunks are queued and dropped for up to DROP_BUDGET
+     milliseconds a step, each checked again then. Gravel chunks cost the
+     most, with their pebbles. */
+  var dropQueue = [], DROP_BUDGET = 2;
+
+  function trim() {
+    if (!dropQueue.length) {
+      slots.forEach(function (s) { if (droppable(s)) dropQueue.push(s); });
+      dropQueue.reverse();
+    }
+    var t0 = performance.now();
+    for (var k = 0; dropQueue.length; k++) {
+      if ((k & 15) === 15 && performance.now() - t0 > DROP_BUDGET) break;
+      var s = dropQueue.pop();
+      if (droppable(s)) evict(s);
+    }
+  }
+
+  var evictMark = 0;
+
   function evict(s) {
-    var g = s << 10, ids = new Set(), k;
-    for (k = 0; k < CB; k++) if (body[g + k]) ids.add(body[g + k]);
-    ids.forEach(function (id) {
+    var g = s << 10, k, last = 0;
+    evictMark++;
+    for (k = 0; k < CB; k++) {
+      var id = body[g + k];
+      if (!id || id === last) continue;
+      last = id;
       var b = bodies.get(id);
-      if (!b) return;
-      b.cells = b.cells.filter(function (c) { return c >> 10 !== s; });
-      b.low = null;
-      if (!b.cells.length) bodies.delete(id);
-    });
+      if (!b || b.evicted === evictMark) continue;
+      b.evicted = evictMark;
+      var c = b.cells, n = 0;
+      for (var q = 0; q < c.length; q++) if (c[q] >> 10 !== s) c[n++] = c[q];
+      if (!n) bodies.delete(id);
+      else { c.length = n; b.low = null; }
+    }
     var cx = chunkX[s], cy = chunkY[s];
     for (var d = 0; d < 4; d++) {
       var n = nb[s * 4 + d];
@@ -1447,7 +1491,9 @@ function makeDig(world) {
     nextId = 1;
     awake = [];
     calmed = 0;
-    collapse = null;
+    collapse.clear();
+    settling = [];
+    dropQueue = [];
     taken.fill(0);
     editedCount = 0;
     for (var p = 0; p < buried.length; p++) buried[p].open = false;
