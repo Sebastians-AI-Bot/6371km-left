@@ -1,17 +1,24 @@
-/* Paints a dig grid (see makeDig) as line-art with water filled in and
+/* Paints a dig world (see makeDig) as line-art with water filled in and
    oil as one smooth shape. draw() and drawOverlay() take the context's
    current transform as the map from window cells to device pixels, so
    the same painter serves the dig page and the cut on the globe.
 
-   The overlay holds only what digging changed against the untouched
+   The painter keeps its own copy of the cells in a window of the world,
+   `view` {W, H, x0, y0} (the world's own by default), and follow() slides
+   it. The overlay holds only what digging changed against the untouched
    ground: holes in paper, water and oil in their colours, moved ground
-   faint. It is for views too far out for the cells themselves. When a
-   changed chunk leaves the window its overlay is kept as a small canvas. */
-function makeDigPaint(S, colors) {
+   faint. It is for views too far out for the cells themselves. Changed
+   chunks outside the window are drawn on it as small canvases. */
+function makeDigPaint(S, colors, view) {
   "use strict";
 
-  var W = S.W, H = S.H, CS = S.CS, CW = S.CW, CH = S.CH;
-  var mat = S.mat, flag = S.flag, body = S.body, shade = S.shade, base = S.base, dirty = S.dirty, edited = S.edited;
+  view = view || S.world;
+  var CS = S.CS, W = view.W, H = view.H;
+  var CW = Math.ceil(W / CS), CH = Math.ceil(H / CS), CB = CS * CS;
+  var ox = Math.floor((view.x0 || 0) / CS) * CS, oy = Math.floor((view.y0 || 0) / CS) * CS;
+  var mat = new Uint8Array(W * H), flag = new Uint8Array(W * H), shade = new Uint8Array(W * H);
+  var base = new Uint8Array(W * H), body = new Int32Array(W * H);
+  var dirty = new Uint8Array(CW * CH), edited = new Uint8Array(CW * CH);
   var AIR = S.AIR, SAND = S.SAND, TOPSOIL = S.TOPSOIL, CLAY = S.CLAY, GRAVEL = S.GRAVEL;
   var STONE = S.STONE, WATER = S.WATER, OIL = S.OIL;
   var LOOSE = S.LOOSE, WET = S.WET, CRACK = S.CRACK;
@@ -37,6 +44,7 @@ function makeDigPaint(S, colors) {
     P_PAPER = packHex(c.paper); P_OIL = packHex(c.oil);
     WATER_RGB = rgb(c.water);
     dirty.fill(1);
+    archive.forEach(function (a) { a.stale = true; });
   }
 
   function layer() {
@@ -72,7 +80,11 @@ function makeDigPaint(S, colors) {
   }
 
   function waterColor(i) {
-    var f = 1 + (shade[i] - 128) / 128 * 0.03;
+    return waterTint(shade[i]);
+  }
+
+  function waterTint(sh) {
+    var f = 1 + (sh - 128) / 128 * 0.03;
     return pack(WATER_RGB[0] * f | 0, WATER_RGB[1] * f | 0, WATER_RGB[2] * f | 0, 215);
   }
 
@@ -129,7 +141,43 @@ function makeDigPaint(S, colors) {
     overlay.ctx.putImageData(overlay.img, 0, 0, x0, y0, w, h);
   }
 
+  /* Copies window chunk (lx, ly) from the world. */
+  function pull(lx, ly) {
+    var c = ly * CW + lx, sl = S.ensure(ox / CS + lx, oy / CS + ly);
+    var w = Math.min(CS, W - lx * CS), h = Math.min(CS, H - ly * CS);
+    var j = ly * CS * W + lx * CS;
+    dirty[c] = 1;
+    if (sl < 0) {
+      for (var r = 0; r < h; r++, j += W) {
+        mat.fill(STONE, j, j + w); base.fill(STONE, j, j + w);
+        flag.fill(0, j, j + w); shade.fill(0, j, j + w); body.fill(0, j, j + w);
+      }
+      edited[c] = 0;
+      return;
+    }
+    var sm = S.mat, sf = S.flag, ss = S.shade, sb = S.base, sy = S.body;
+    for (var y = 0, i = sl << 10; y < h; y++, i += CS, j += W) {
+      mat.set(sm.subarray(i, i + w), j); flag.set(sf.subarray(i, i + w), j);
+      shade.set(ss.subarray(i, i + w), j); base.set(sb.subarray(i, i + w), j);
+      body.set(sy.subarray(i, i + w), j);
+    }
+    edited[c] = S.isEdited(sl) ? 1 : 0;
+  }
+
+  function pullAll() {
+    for (var ly = 0; ly < CH; ly++) for (var lx = 0; lx < CW; lx++) pull(lx, ly);
+    S.pin(ox / CS, oy / CS, ox / CS + CW - 1, oy / CS + CH - 1);
+  }
+
   function recolor() {
+    var list = S.takeDirty(), k;
+    for (k = 0; k < list.length; k++) {
+      var sl = list[k];
+      if (!S.isLive(sl)) continue;
+      var c = S.chunkOf(sl), lx = c.cx - ox / CS, ly = c.cy - oy / CS;
+      if (lx >= 0 && ly >= 0 && lx < CW && ly < CH) pull(lx, ly);
+      else if (S.isEdited(sl)) stale(c.cx, c.cy);
+    }
     for (var cy = 0; cy < CH; cy++) {
       var cx = 0;
       while (cx < CW) {
@@ -340,23 +388,44 @@ function makeDigPaint(S, colors) {
     else blit(ctx, lines, v);
   }
 
-  function chunkPixels(cx, cy) {
-    var cv = document.createElement("canvas");
-    cv.width = CS;
-    cv.height = CS;
-    var c = cv.getContext("2d");
-    c.drawImage(overlay.cv, cx * CS, cy * CS, CS, CS, 0, 0, CS, CS);
-    var d = new Uint32Array(c.getImageData(0, 0, CS, CS).data.buffer);
-    for (var k = 0; k < d.length; k++) if (d[k]) return cv;
-    return null;
+  /* A changed chunk outside the window, drawn again from the world the
+     next time the overlay is drawn after it changed. */
+  function stale(cx, cy) {
+    var k = cx + "," + cy, a = archive.get(k);
+    if (a) a.stale = true;
+    else archive.set(k, { cx: cx, cy: cy, cv: null, stale: true });
+  }
+
+  var tileImg = null, lastTiles = 0;
+
+  function tile(a) {
+    a.stale = false;
+    var sl = S.slotAt(a.cx, a.cy);
+    if (sl < 0) { a.cv = null; return; }
+    if (!tileImg) tileImg = new ImageData(CS, CS);
+    var px = new Uint32Array(tileImg.data.buffer), sm = S.mat, sb = S.base, ss = S.shade, any = false;
+    for (var k = 0, i = sl << 10; k < CB; k++, i++) {
+      var m = sm[i], v = 0;
+      if (m !== sb[i]) v = m === AIR ? P_PAPER : m === WATER ? waterTint(ss[i]) : m === OIL ? P_OIL : P_FAINT;
+      px[k] = v;
+      if (v) any = true;
+    }
+    if (!any) { a.cv = null; return; }
+    if (!a.cv) {
+      a.cv = document.createElement("canvas");
+      a.cv.width = CS;
+      a.cv.height = CS;
+    }
+    a.cv.getContext("2d").putImageData(tileImg, 0, 0);
   }
 
   function drawOverlay(ctx) {
-    var v = viewOf(ctx), o = S.origin();
+    var v = viewOf(ctx), now = performance.now(), fresh = now - lastTiles > 200;
+    if (fresh) lastTiles = now;
     blit(ctx, overlay, v);
     archive.forEach(function (a) {
-      var x = a.wcx * CS - o.x, y = a.wcy * CS - o.y;
-      ctx.drawImage(a.cv, x, y);
+      if (a.stale && fresh) tile(a);
+      if (a.cv) ctx.drawImage(a.cv, a.cx * CS - ox, a.cy * CS - oy);
     });
   }
 
@@ -371,32 +440,62 @@ function makeDigPaint(S, colors) {
     }
   }
 
-  S.onShift(function (scx, scy) {
-    var o = S.origin(), cx, cy;
+  /* Slides the window by whole chunks. */
+  function slide(scx, scy) {
+    var cx, cy, ccx = ox / CS, ccy = oy / CS;
     for (cy = 0; cy < CH; cy++) {
       for (cx = 0; cx < CW; cx++) {
         var nx = cx - scx, ny = cy - scy;
-        if (nx >= 0 && ny >= 0 && nx < CW && ny < CH) continue;
-        if (!edited[cy * CW + cx]) continue;
-        var cv = chunkPixels(cx, cy);
-        var wcx = o.x / CS + cx, wcy = o.y / CS + cy;
-        if (cv) archive.set(wcx + "," + wcy, { wcx: wcx, wcy: wcy, cv: cv });
+        if ((nx < 0 || ny < 0 || nx >= CW || ny >= CH) && edited[cy * CW + cx]) stale(ccx + cx, ccy + cy);
       }
     }
-    var nx0 = o.x / CS + scx, ny0 = o.y / CS + scy;
+    ox += scx * CS;
+    oy += scy * CS;
+    ccx += scx;
+    ccy += scy;
     archive.forEach(function (a, key) {
-      if (a.wcx >= nx0 && a.wcx < nx0 + CW && a.wcy >= ny0 && a.wcy < ny0 + CH) archive.delete(key);
+      if (a.cx >= ccx && a.cx < ccx + CW && a.cy >= ccy && a.cy < ccy + CH) archive.delete(key);
     });
     var sx = scx * CS, sy = scy * CS;
+    [mat, flag, shade, base, body, oilSeen].forEach(function (a) { shiftPx(a, W, H, sx, sy); });
+    shiftPx(edited, CW, CH, scx, scy);
+    shiftPx(dirty, CW, CH, scx, scy);
     [lines, fills, overlay].forEach(function (l) {
       shiftPx(l.px, W, H, sx, sy);
       l.ctx.putImageData(l.img, 0, 0);
     });
-    shiftPx(oilSeen, W, H, sx, sy);
+    for (cy = 0; cy < CH; cy++) {
+      for (cx = 0; cx < CW; cx++) {
+        var px = cx + scx, py = cy + scy;
+        if (px < 0 || py < 0 || px >= CW || py >= CH) pull(cx, cy);
+      }
+    }
     oilDirty = true;
+    S.pin(ccx, ccy, ccx + CW - 1, ccy + CH - 1);
+  }
+
+  /* Keeps world cell (wx, wy) near the middle of the window. */
+  function follow(wx, wy) {
+    var scx = Math.round((wx - ox - W / 2) / CS);
+    var scy = Math.round((wy - oy - H / 2) / CS);
+    if (Math.abs(scx) < 2) scx = 0;
+    if (Math.abs(scy) < 2) scy = 0;
+    if (!scx && !scy) return false;
+    slide(scx, scy);
+    return true;
+  }
+
+  S.onReset(function () {
+    archive.clear();
+    pullAll();
   });
+  pullAll();
 
   return {
+    W: W, H: H, CS: CS,
+    /* World cell at the window's top left corner. */
+    origin: function () { return { x: ox, y: oy }; },
+    follow: follow,
     recolor: recolor,
     draw: draw,
     drawOverlay: drawOverlay,

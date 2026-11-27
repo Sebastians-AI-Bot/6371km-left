@@ -3,7 +3,8 @@
    Topsoil, clay and sand are themselves, gravel is pebbles in sand, and
    every rock unit below is stone. The groundwater pocket is wet sand
    under its own water table; gas is air, oil is oil, brine is water and
-   magma stays stone. */
+   magma stays stone. W × H at x0, y0 is the window the painter starts
+   with. */
 function makeColumnWorld(column, pockets) {
   "use strict";
 
@@ -75,7 +76,6 @@ function makeColumnWorld(column, pockets) {
   return {
     W: W,
     H: H,
-    ring: true,
     x0: -W / 2,
     y0: -8 * CS,
     table: water ? water.y0 : Infinity,

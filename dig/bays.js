@@ -1,5 +1,5 @@
 /* Seven test bays side by side, each 3 m wide and 3 m deep, under 40 cm
-   of sky. The whole world fits the window, so it never slides. */
+   of sky, walled in on every side. */
 var DIG = (function () {
   "use strict";
 
@@ -44,7 +44,8 @@ var DIG = (function () {
   return makeDig({
     W: BAY * BAYS.length,
     H: SKY + DEPTH,
-    ring: false,
+    bounds: { x0: 0, y0: 0, x1: BAY * BAYS.length, y1: SKY + DEPTH },
+    sky: function (x, y) { return y < SKY; },
     table: TABLE,
     saturated: function (x, y) { return y >= TABLE && x >= 5 * BAY && x < 6 * BAY; },
     cell: cell,

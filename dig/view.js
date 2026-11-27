@@ -4,7 +4,7 @@
   "use strict";
 
   var S = DIG;
-  var W = S.W, H = S.H, AIR = S.AIR;
+  var W = S.world.W, H = S.world.H, AIR = S.AIR;
 
   var PAPER = "#f3f0e8", INK = "#3a4654", MID = "#5c6c7c", FAINT = "#8e9bab", WATER_INK = "#46698f", WET_FILL = "#d5e1ea";
 

@@ -2076,7 +2076,7 @@
       ["fps", fpsLabel],
       ["sim", digTime.sim.toFixed(1) + " ms"],
       ["dig paint", digTime.paint.toFixed(1) + " ms"],
-      ["awake", digStats.active + " chunks, " + digStats.awake + " clumps"]
+      ["awake", digStats.active + " of " + digStats.chunks + " chunks, " + digStats.awake + " clumps"]
     ];
   }
 
@@ -2306,7 +2306,7 @@
     ctx.textAlign = "right";
     ctx.fillText(digFar ? "digs" : "no tool", x + w - pad, digFarHit.y + controlH / 2);
     ctx.textAlign = "left";
-    ctx.fillText("sim area", x + pad, simAreaHit.y + controlH / 2);
+    ctx.fillText("awake chunks", x + pad, simAreaHit.y + controlH / 2);
     ctx.textAlign = "right";
     ctx.fillText(showSimArea ? "shown" : "hidden", x + w - pad, simAreaHit.y + controlH / 2);
     ctx.textAlign = "left";
@@ -2596,11 +2596,11 @@
   }
 
   /* Dig cells on the centre face. A cell is a centimetre: x across the
-     face, y down from the surface, offset by the window's origin. The
-     window is lifted onto the curve of the surface at its middle. */
+     face, y down from the surface. The cells are lifted onto the curve of
+     the surface at the middle of the painter's window. */
   function digLift() {
-    var o = DIG.origin();
-    return surfaceY((o.x + DIG.W / 2) / 100);
+    var o = digPaint.origin();
+    return surfaceY((o.x + digPaint.W / 2) / 100);
   }
 
   /* 0 far out, where only changed ground is shown over the hatch, to 1
@@ -2611,25 +2611,23 @@
 
   function digFace(v) {
     var fv = faceView(v);
-    var o = DIG.origin();
     var lift = digLift();
     return {
       fv: fv,
-      sx: function (cx) { return fv.box.x + ((o.x + cx) / 100 - fv.left) * fv.px; },
-      sy: function (cy) { return fv.box.y + ((o.y + cy) / 100 + lift - fv.top) * fv.pxY; },
-      cx: function (sx) { return (fv.left + (sx - fv.box.x) / fv.px) * 100 - o.x; },
-      cy: function (sy) { return (fv.top + (sy - fv.box.y) / fv.pxY - lift) * 100 - o.y; }
+      sx: function (cx) { return fv.box.x + (cx / 100 - fv.left) * fv.px; },
+      sy: function (cy) { return fv.box.y + (cy / 100 + lift - fv.top) * fv.pxY; },
+      cx: function (sx) { return (fv.left + (sx - fv.box.x) / fv.px) * 100; },
+      cy: function (sy) { return (fv.top + (sy - fv.box.y) / fv.pxY - lift) * 100; }
     };
   }
 
-  /* The window cell under a screen point, if that point is on the face. */
+  /* The dig cell under a screen point, if that point is on the face. */
   function digCellAt(v, sx, sy) {
     var b = v.box;
     if (sx < b.x || sx > b.x + b.w || sy < b.y || sy > b.y + b.h) return null;
     var f = digFace(v);
-    var o = DIG.origin();
     var x = f.cx(sx), y = f.cy(sy);
-    if (Math.abs((o.x + x) / 100) > FACE_HALF || (o.y + y) / 100 > digDepth()) return null;
+    if (Math.abs(x / 100) > FACE_HALF || y / 100 > digDepth()) return null;
     return { x: x, y: y, f: f };
   }
 
@@ -2639,23 +2637,23 @@
     var cell = vp.px / 100;
     if (cell < 0.01) return;
     var t0 = performance.now();
-    var o = DIG.origin();
+    var o = digPaint.origin(), W = digPaint.W, H = digPaint.H;
     var look = digLook(vp.px);
     ctx.save();
     ctx.transform(cell, 0, 0, cell,
       vp.box.x + (o.x / 100 - vp.left) * vp.px,
       vp.box.y + (o.y / 100 + digLift() - vp.top) * vp.px);
     var floor = digDepth() * 100 - o.y;
-    if (floor < DIG.H) {
+    if (floor < H) {
       ctx.beginPath();
-      ctx.rect(-DIG.W, -DIG.H, DIG.W * 3, floor + DIG.H);
+      ctx.rect(-W, -H, W * 3, floor + H);
       ctx.clip();
     }
     if (look < 1) digPaint.drawOverlay(ctx);
     if (look > 0) {
       ctx.globalAlpha = look;
       ctx.fillStyle = PAPER;
-      ctx.fillRect(0, 0, DIG.W, DIG.H);
+      ctx.fillRect(0, 0, W, H);
       digPaint.draw(ctx, 4);
     }
     ctx.restore();
@@ -2669,7 +2667,7 @@
     var fv = faceView(v);
     var x = clamp(v.left + v.worldW / 2, -FACE_HALF, FACE_HALF);
     var y = fv.top + fv.worldH / 2 - digLift();
-    DIG.follow(x * 100, Math.max(y * 100, DIG.H / 2 - 256));
+    digPaint.follow(x * 100, Math.max(y * 100, digPaint.H / 2 - 256));
   }
 
   function digReachOf(fp) {
@@ -2681,27 +2679,13 @@
     return digReach.ok;
   }
 
-  function inWindow(fp) {
-    var ring = DIG.RING;
-    return fp.x0 >= ring && fp.y0 >= ring && fp.x1 < DIG.W - ring && fp.y1 < DIG.H - ring;
-  }
-
-  /* Outside the window only the untouched ground is known. */
-  var genCell = { mat: 0, flag: 0, shade: 0, clump: 0 };
-  function groundAt(c) {
-    var o = DIG.origin();
-    DIG.world.cell(o.x + Math.floor(c.x), o.y + Math.floor(c.y), genCell);
-    return { mat: genCell.mat, name: DIG.NAMES[genCell.mat] + (genCell.flag & DIG.WET ? " (wet)" : ""), hitsLeft: 1 };
-  }
-
   function drawDigHover(v) {
     if (!digHover || pan || modalOpen || hitRect(debugBox, digHover.x, digHover.y)) return;
     if (!digFar && digLook(v.px) < 0.5) return;
     var c = digCellAt(v, digHover.x, digHover.y);
     if (!c) return;
     var fp = DIG.footprint(c.x, c.y, toolW, toolH);
-    var inside = inWindow(fp);
-    var ok = !inside || digReachOf(fp);
+    var ok = digReachOf(fp);
     var x0 = c.f.sx(fp.x0), y0 = c.f.sy(fp.y0);
     var x1 = c.f.sx(fp.x1 + 1), y1 = c.f.sy(fp.y1 + 1);
     ctx.save();
@@ -2714,7 +2698,7 @@
       ctx.ellipse(Math.round(x0) + bw / 2, Math.round(y0) + bh / 2, bw / 2, bh / 2, 0, 0, Math.PI * 2);
       ctx.stroke();
     } else ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5, bw, bh);
-    var here = inside ? DIG.at(c.x, c.y, toolName) : groundAt(c);
+    var here = DIG.at(c.x, c.y, toolName);
     var parts = [];
     if (here && here.mat !== DIG.AIR) {
       parts.push(here.name + (here.tooHard ? ", too hard for the " + toolName
@@ -2736,62 +2720,29 @@
     ctx.restore();
   }
 
-  /* The simulated window on the face: its edge dashed, the frozen ring
-     inside it dotted, and the chunks scanned in the last substep shaded.
-     Outside the window the ground waits as it was left. */
+  /* The chunks scanned in the last substep, shaded on the face. */
   function drawSimArea(v) {
-    var f = digFace(v);
-    var x0 = f.sx(0), y0 = f.sy(0), x1 = f.sx(DIG.W), y1 = f.sy(DIG.H);
-    if (x1 - x0 < 6) return;
-    var CS = DIG.CS, CW = DIG.CW, CH = DIG.CH, awake = DIG.awakeChunks(), ring = !!DIG.RING;
+    var f = digFace(v), CS = DIG.CS, awake = DIG.awakeChunks();
+    if (f.sx(CS) - f.sx(0) < 0.5) return;
     ctx.save();
     ctx.fillStyle = INK;
     ctx.globalAlpha = 0.07;
-    for (var cy = 0; cy < CH; cy++) {
-      for (var cx = 0; cx < CW; cx++) {
-        if (!awake[cy * CW + cx]) continue;
-        if (ring && (cx === 0 || cy === 0 || cx === CW - 1 || cy === CH - 1)) continue;
-        var ax = f.sx(cx * CS), ay = f.sy(cy * CS);
-        ctx.fillRect(ax, ay, f.sx((cx + 1) * CS) - ax, f.sy((cy + 1) * CS) - ay);
-      }
+    for (var k = 0; k < awake.length; k++) {
+      var cx = awake[k][0], cy = awake[k][1];
+      var ax = f.sx(cx * CS), ay = f.sy(cy * CS);
+      ctx.fillRect(ax, ay, f.sx((cx + 1) * CS) - ax, f.sy((cy + 1) * CS) - ay);
     }
-    ctx.globalAlpha = 1;
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = MID;
-    ctx.setLineDash([6, 4]);
-    ctx.strokeRect(Math.round(x0) + 0.5, Math.round(y0) + 0.5, Math.round(x1 - x0), Math.round(y1 - y0));
-    if (ring) {
-      var r = DIG.RING;
-      var rx0 = f.sx(r), ry0 = f.sy(r), rx1 = f.sx(DIG.W - r), ry1 = f.sy(DIG.H - r);
-      ctx.strokeStyle = FAINT;
-      ctx.setLineDash([2, 3]);
-      ctx.strokeRect(Math.round(rx0) + 0.5, Math.round(ry0) + 0.5, Math.round(rx1 - rx0), Math.round(ry1 - ry0));
-    }
-    setFont(11);
-    ctx.fillStyle = MID;
-    ctx.textAlign = "right";
-    ctx.textBaseline = "top";
-    ctx.fillText("simulated", Math.round(x1) - 5, Math.round(y0) + 5);
     ctx.restore();
   }
 
-  /* Zoomed out the window is not under the view, so it is moved to the
-     click first. */
   function digAt(sx, sy) {
     var v = viewOf(currentWorldW());
     if (!digFar && digLook(v.px) < 0.5) return false;
     var c = digCellAt(v, sx, sy);
     if (!c) return false;
-    var o = DIG.origin();
-    var wx = o.x + c.x, wy = o.y + c.y;
-    if (!inWindow(DIG.footprint(c.x, c.y, toolW, toolH))) {
-      DIG.slide(Math.round((c.x - DIG.W / 2) / DIG.CS), Math.round((c.y - DIG.H / 2) / DIG.CS));
-      o = DIG.origin();
-    }
-    var cx = wx - o.x, cy = wy - o.y;
-    if (DIG.dig(cx, cy, toolW, toolH, toolName).ok) {
-      var fp = DIG.footprint(cx, cy, toolW, toolH);
-      var reach = Math.max(Math.abs(o.x + fp.x0), Math.abs(o.x + fp.x1 + 1)) / 100;
+    if (DIG.dig(c.x, c.y, toolW, toolH, toolName).ok) {
+      var fp = DIG.footprint(c.x, c.y, toolW, toolH);
+      var reach = Math.max(Math.abs(fp.x0), Math.abs(fp.x1 + 1)) / 100;
       faceGoal = clamp(Math.max(faceGoal, reach + FACE_ROOM), FACE_MIN / 2, FACE_MAX / 2);
     }
     digReach.key = "";
