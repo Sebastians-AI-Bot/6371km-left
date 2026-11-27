@@ -147,18 +147,50 @@
   }
 
   var statsEl = document.getElementById("stats");
-  var fps = 0, frames = 0, fpsAt = 0, simMs = 0;
+  var fps = 0, frames = 0, fpsAt = 0;
+  /* Per-frame costs summed since the panel last showed them, and the worst
+     frame among them. */
+  var sum = {}, worst = {};
+
+  function noteCost(c) {
+    for (var k in c) {
+      sum[k] = (sum[k] || 0) + c[k];
+      if (!(worst[k] >= c[k])) worst[k] = c[k];
+    }
+  }
+
+  function costRows(n) {
+    function ms(k) { return (sum[k] / n).toFixed(1) + " / " + worst[k].toFixed(1) + " ms"; }
+    function count(k) { var v = sum[k] / n; return v >= 10000 ? Math.round(v / 1000) + "k" : v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(Math.round(v)); }
+    return [
+      ["per frame", "average / worst"],
+      ["frame", ms("frame")],
+      ["js", ms("work")],
+      ["sim", ms("sim")],
+      ["\u00b7 cells", ms("cells")],
+      ["\u00b7 clumps", ms("clumps")],
+      ["\u00b7 settle", ms("settle")],
+      ["drawing", ms("draw")],
+      ["digging", ms("tools")],
+      ["sim steps", (sum.steps / n).toFixed(1)],
+      ["cells scanned", count("scanned")],
+      ["grains checked", count("grains")],
+      ["grains moved", count("grainsMoved")],
+      ["liquids checked", count("liquids")],
+      ["liquids moved", count("liquidsMoved")],
+      ["pressure walk", count("pressure") + " cells"],
+      ["seeps", (sum.seeps / n).toFixed(1)]
+    ];
+  }
 
   function showStats(now) {
     frames++;
-    if (now - fpsAt < 250) return;
+    if (now - fpsAt < 500) return;
     fps = frames * 1000 / (now - fpsAt);
-    frames = 0;
     fpsAt = now;
     var s = S.stats();
     var rows = [
       ["fps", Math.round(fps)],
-      ["sim", simMs.toFixed(1) + " ms"],
       ["zoom", (cam.s >= 1 ? cam.s.toFixed(1) : cam.s.toFixed(2)) + " px/cm"],
       ["moving", s.active + " of " + s.chunks + " chunks"],
       ["clumps", s.awake + " moving, " + s.clumps],
@@ -171,6 +203,10 @@
       any = true;
     }
     if (!any) rows.push(["taken", "nothing yet"]);
+    if (sum.frame !== undefined) rows = rows.concat(costRows(frames));
+    frames = 0;
+    sum = {};
+    worst = {};
     var html = "";
     for (var r = 0; r < rows.length; r++) html += "<dt>" + rows[r][0] + "</dt><dd>" + rows[r][1] + "</dd>";
     statsEl.innerHTML = html;
@@ -178,21 +214,26 @@
 
   var last = 0, acc = 0;
   function frame(now) {
-    var dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
+    var gap = last ? now - last : 0;
+    var dt = Math.min(0.1, gap / 1000);
     last = now;
+    var t0 = performance.now();
     if (!paused) {
       acc += dt;
-      var n = 0, t0 = performance.now();
+      var n = 0;
       while (acc >= 1 / 60 && n < 3) {
         S.step();
         acc -= 1 / 60;
         n++;
       }
       if (n === 3) acc = 0;
-      if (n) simMs = simMs * 0.8 + (performance.now() - t0) / n * 0.2;
     }
+    var t1 = performance.now();
     paint.recolor();
     render();
+    var c = S.takeCost(), t2 = performance.now();
+    c.frame = gap; c.work = t2 - t0; c.sim = t1 - t0; c.draw = t2 - t1;
+    noteCost(c);
     showStats(now);
     requestAnimationFrame(frame);
   }

@@ -118,12 +118,53 @@
   /* Sim steps per frame stop after this many milliseconds, so heavy
      digging slows the sim down instead of the frame rate. */
   var SIM_BUDGET = 6;
-  /* Smoothed milliseconds per frame, for the debug panel. */
-  var digTime = { sim: 0, paint: 0 };
   var digStats = { active: 0, awake: 0 };
+  /* Per-frame costs for the debug panel: the average over half a second
+     and the worst frame in it. */
+  var cost = { n: 0, at: 0, sum: {}, worst: {}, shown: null };
 
-  function timeDig(key, ms) {
-    digTime[key] += (ms - digTime[key]) * 0.1;
+  function noteCost(f, now) {
+    for (var k in f) {
+      cost.sum[k] = (cost.sum[k] || 0) + f[k];
+      if (!(cost.worst[k] >= f[k])) cost.worst[k] = f[k];
+    }
+    cost.n++;
+    if (now - cost.at < 500) return;
+    var avg = {};
+    for (k in cost.sum) avg[k] = cost.sum[k] / cost.n;
+    cost.shown = { avg: avg, worst: cost.worst };
+    cost.sum = {};
+    cost.worst = {};
+    cost.n = 0;
+    cost.at = now;
+  }
+
+  function costRows() {
+    var c = cost.shown;
+    if (!c) return [["frame", "\u2014"]];
+    var a = c.avg, w = c.worst;
+    function ms(k) { return a[k].toFixed(1) + " / " + w[k].toFixed(1) + " ms"; }
+    function count(n) { return n >= 10000 ? Math.round(n / 1000) + "k" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(Math.round(n)); }
+    return [
+      ["per frame", "average / worst"],
+      ["frame", ms("frame")],
+      ["js", ms("work")],
+      ["sim", ms("sim")],
+      ["\u00b7 cells", ms("cells")],
+      ["\u00b7 clumps", ms("clumps")],
+      ["\u00b7 settle", ms("settle")],
+      ["dig paint", ms("paint")],
+      ["other drawing", ms("draw")],
+      ["digging", ms("tools")],
+      ["sim steps", a.steps.toFixed(1)],
+      ["cells scanned", count(a.scanned)],
+      ["grains checked", count(a.grains)],
+      ["grains moved", count(a.grainsMoved)],
+      ["liquids checked", count(a.liquids)],
+      ["liquids moved", count(a.liquidsMoved)],
+      ["pressure walk", count(a.pressure) + " cells"],
+      ["seeps", a.seeps.toFixed(1)]
+    ];
   }
 
   function digColors() {
@@ -2074,11 +2115,9 @@
       ["zoom", zoom],
       ["scroll", formatTickDepth(v.top + v.worldH / 2)],
       ["fps", fpsLabel],
-      ["sim", digTime.sim.toFixed(1) + " ms"],
-      ["dig paint", digTime.paint.toFixed(1) + " ms"],
       ["awake", digStats.active + " of " + digStats.chunks + " chunks, " + digStats.coarse + " coarse"],
       ["clumps", digStats.awake + " moving"]
-    ];
+    ].concat(costRows());
   }
 
   var debugOpen = true;
@@ -2783,7 +2822,6 @@
       n++;
     }
     if (simAcc >= 1 / 60) simAcc = 0;
-    timeDig("sim", performance.now() - t0);
     digStats = DIG.stats();
   }
 
@@ -4061,7 +4099,6 @@
     ctx.save();
     clipSheet(v.box);
     drawCutGlobe(v, faceView(v), tb);
-    timeDig("paint", digPaintMs);
     if (showSimArea) drawSimArea(v);
     drawDigHover(v);
     ctx.restore();
@@ -4159,6 +4196,7 @@
   }
 
   function onFrame(now) {
+    var gap = fpsLast ? now - fpsLast : 0;
     if (fpsLast) {
       var dt = now - fpsLast;
       if (dt > 0 && dt < 250) {
@@ -4177,8 +4215,20 @@
       }
     }
     fpsLast = now;
+    var t0 = performance.now();
     stepDig(now);
+    var t1 = performance.now();
     draw();
+    var t2 = performance.now();
+    var c = DIG.takeCost();
+    if (gap > 0 && gap < 250) {
+      c.frame = gap;
+      c.work = t2 - t0;
+      c.sim = t1 - t0;
+      c.paint = digPaintMs;
+      c.draw = t2 - t1 - digPaintMs;
+      noteCost(c, now);
+    }
     requestAnimationFrame(onFrame);
   }
 

@@ -394,6 +394,7 @@ function makeDig(world) {
   }
 
   function grain(i) {
+    nGrain++;
     var m = mat[i], sand = m === SAND;
     var j = south(i);
     if (j >= 0) {
@@ -467,6 +468,7 @@ function makeDig(world) {
       if (yOf(j) < world.table) continue;
       open = true;
       if (Math.random() < 0.04 * scale) {
+        nSeep++;
         mat[j] = WATER;
         flag[j] = 0;
         shade[j] = (Math.random() * 256) | 0;
@@ -479,7 +481,26 @@ function makeDig(world) {
 
   var PRESS = 60;
 
+  /* Work since the last takeCost(), for the debug panels: milliseconds per
+     phase and cells checked or moved. */
+  var cost = blankCost();
+  var nGrain = 0, nGrainMoved = 0, nLiquid = 0, nLiquidMoved = 0, nPress = 0, nSeep = 0, nScanned = 0;
+
+  function blankCost() {
+    return { steps: 0, cells: 0, clumps: 0, settle: 0, tools: 0 };
+  }
+
+  function takeCost() {
+    var c = cost;
+    c.scanned = nScanned; c.grains = nGrain; c.grainsMoved = nGrainMoved;
+    c.liquids = nLiquid; c.liquidsMoved = nLiquidMoved; c.pressure = nPress; c.seeps = nSeep;
+    nGrain = nGrainMoved = nLiquid = nLiquidMoved = nPress = nSeep = nScanned = 0;
+    cost = blankCost();
+    return c;
+  }
+
   function fluid(i, m) {
+    nLiquid++;
     var slow = m === OIL, p = (slow ? 0.4 : 1) * REST_PACE;
     var wait = Math.random() > pace(p);
     var j = south(i), d, k, c;
@@ -532,6 +553,7 @@ function makeDig(world) {
         var bit = dir > 0 ? 1 : 2, tag = (sub & 0x3fff) << 2, shut = false;
         c = i;
         for (r = 1; r <= PRESS; r++) {
+          nPress++;
           c = side(c, dir);
           if (c < 0) { shut = true; break; }
           if (mat[c] === m) {
@@ -575,11 +597,16 @@ function makeDig(world) {
     var m = mat[i];
     if (m === AIR || body[i]) return;
     var j = move(i);
-    if (scale === 1 || !(j >= 0)) return;
+    if (!(j >= 0)) return;
+    if (m === WATER || m === OIL) nLiquidMoved++; else nGrainMoved++;
+    if (scale === 1) return;
     var left = (m === OIL ? 0.4 * REST_PACE : m === WATER ? REST_PACE : paceOf(m)) * scale - 1;
     while (left > 0 && j >= 0 && (left >= 1 || Math.random() < left)) {
       left -= 1;
       j = move(j);
+      if (j >= 0) {
+        if (m === WATER || m === OIL) nLiquidMoved++; else nGrainMoved++;
+      }
     }
   }
 
@@ -638,6 +665,7 @@ function makeDig(world) {
           var bb = s * 4;
           if (ly < activeBox[bb + 1] || ly > activeBox[bb + 3]) continue;
           var row = (s << 10) | (ly << 5), xa = activeBox[bb], xb = activeBox[bb + 2], x;
+          nScanned += xb - xa + 1;
           if (rev) for (x = xb; x >= xa; x--) cell(row | x);
           else for (x = xa; x <= xb; x++) cell(row | x);
         }
@@ -894,6 +922,12 @@ function makeDig(world) {
      by the box edge; up and down the pad is enough, as a ceiling hangs
      from the ground above it. */
   function settleAround(x0, y0, x1, y1, extra) {
+    var t0 = performance.now();
+    settleAround0(x0, y0, x1, y1, extra);
+    cost.settle += performance.now() - t0;
+  }
+
+  function settleAround0(x0, y0, x1, y1, extra) {
     var pad = SETTLE_PAD + (extra || 0);
     ensureBox(x0 - pad, y0 - pad, x1 + pad, y1 + pad);
     var padX = Math.max(pad, reachIn(x0 - pad, y0 - pad, x1 + pad, y1 + pad) + 8);
@@ -1168,6 +1202,13 @@ function makeDig(world) {
 
   /* One use of the tool (see footprint and TOOLS). */
   function dig(cx, cy, tw, th, tool) {
+    var t0 = performance.now(), s0 = cost.settle;
+    var r = dig0(cx, cy, tw, th, tool);
+    cost.tools += performance.now() - t0 - (cost.settle - s0);
+    return r;
+  }
+
+  function dig0(cx, cy, tw, th, tool) {
     var t = toolOf(tool);
     var f = footprint(cx, cy, tw, th);
     var size = Math.min(f.x1 - f.x0, f.y1 - f.y0) + 1;
@@ -1273,9 +1314,14 @@ function makeDig(world) {
 
   function step() {
     ticks++;
+    cost.steps++;
+    var t0 = performance.now();
     stepBodies();
+    var t1 = performance.now();
     stepCells();
     stepCells();
+    cost.clumps += t1 - t0;
+    cost.cells += performance.now() - t1;
     if (collapse && ticks % 12 === 0) {
       var c = collapse;
       collapse = null;
@@ -1457,6 +1503,7 @@ function makeDig(world) {
     canReach: canReach,
     at: at,
     stats: stats,
+    takeCost: takeCost,
     reset: build
   };
 }
